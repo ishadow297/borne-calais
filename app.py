@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime
 
 # --- CONFIGURATION ---
-SHEET_URL = "TON_LIEN_GOOGLE_SHEET_ICI" # Colle ton lien ici
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/edit?usp=sharing" # Colle ton lien ici
 
 st.set_page_config(page_title="Bornes Calais", page_icon="⚡")
 st.title("⚡ Bornes Gratuites - Calais")
