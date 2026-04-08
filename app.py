@@ -1,57 +1,39 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-st.set_page_config(page_title="Planning Bornes Calais", page_icon="⚡")
-st.title("⚡ Planning de Recharge")
+st.set_page_config(page_title="Bornes Calais", page_icon="⚡")
 
-# Connexion
-conn = st.connection("gsheets", type=GSheetsConnection)
-df = conn.read(ttl=0)
+# Lien de ton Google Sheets
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/gviz/tq?tqx=out:csv"
+# Lien pour que les gens puissent MODIFIER
+EDIT_URL = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/edit"
 
-# Nettoyage automatique des données pour éviter les erreurs de type
-for col in ['Statut', 'Utilisateur', 'Heure de fin', 'Suivant']:
-    if col not in df.columns:
-        df[col] = ""
-    df[col] = df[col].astype(str).replace('nan', '')
+st.title("⚡ Planning des Bornes")
+st.write("Consultez l'état des bornes ci-dessous. Pour réserver un créneau (aujourd'hui ou demain), utilisez le bouton modifier.")
 
-# --- AFFICHAGE ---
-st.header("📍 État actuel")
-for index, row in df.iterrows():
-    status = str(row['Statut']).strip().lower()
-    with st.expander(f"{row['Borne']} - {'🟢 LIBRE' if status == 'libre' else '🔴 OCCUPÉ'}"):
-        st.write(f"👤 **Utilisateur :** {row['Utilisateur']}")
-        st.write(f"⏰ **Fin :** {row['Heure de fin']}")
-        if row['Suivant']:
-            st.warning(f"⏳ Futur : {row['Suivant']}")
+# Lecture des données (Gratuit et simple)
+try:
+    df = pd.read_csv(SHEET_URL)
+    # On affiche chaque borne proprement
+    for index, row in df.iterrows():
+        with st.container():
+            col1, col2 = st.columns([2, 1])
+            status = str(row['Statut']).strip().lower()
+            icon = "🟢" if status == "libre" else "🔴"
             
-        if st.button(f"Libérer {row['Borne']}", key=f"lib_{index}"):
-            df.at[index, 'Statut'] = "libre"
-            df.at[index, 'Utilisateur'] = ""
-            df.at[index, 'Heure de fin'] = ""
-            conn.update(data=df)
-            st.rerun()
-
-# --- RÉSERVATION ---
-st.divider()
-st.header("📅 Réserver (Auj, Demain, +2j)")
-with st.form("planning"):
-    b = st.selectbox("Borne", df['Borne'].unique())
-    act = st.radio("Moment", ["Maintenant", "Plus tard"])
-    nom = st.text_input("Prénom")
-    h = st.text_input("Jour / Heure (ex: Demain 14h)")
-    
-    if st.form_submit_button("Enregistrer"):
-        if nom and h:
-            idx = df[df['Borne'] == b].index[0]
-            if act == "Maintenant":
-                df.at[idx, 'Statut'] = "Occupé"
-                df.at[idx, 'Utilisateur'] = nom
-                df.at[idx, 'Heure de fin'] = h
-            else:
-                old = str(df.at[idx, 'Suivant'])
-                df.at[idx, 'Suivant'] = f"{old} | {nom}({h})".strip(" | ")
+            col1.subheader(f"{icon} {row['Borne']}")
+            if status != "libre":
+                col1.write(f"👤 Occupé par : **{row['Utilisateur']}**")
+                col1.write(f"⏰ Fin prévue : **{row['Heure de fin']}**")
             
-            conn.update(data=df)
-            st.success("C'est enregistré !")
-            st.rerun()
+            if pd.notna(row['Suivant']) and str(row['Suivant']) != "":
+                col1.info(f"📅 Réservations : {row['Suivant']}")
+            
+            st.divider()
+except:
+    st.error("Impossible de lire le planning pour le moment.")
+
+# Le gros bouton magique
+st.link_button("📝 MODIFIER LE PLANNING / RÉSERVER", EDIT_URL, use_container_width=True)
+
+st.caption("Une fois que vous avez modifié le fichier Excel, rafraîchissez cette page pour voir les changements.")
