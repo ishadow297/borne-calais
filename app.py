@@ -1,38 +1,32 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+import requests
+
+# REMPLACE CETTE URL PAR CELLE COPIÉE À L'ÉTAPE PRÉCÉDENTE
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwfr__TekrEpJGmVEu1SvGqRVIppFOQDQJ_MUp7_lwxSRDZ5NAFVlnoThtybQ7IuZlM/exec"
+SHEET_CSV = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/export?format=csv"
 
 st.title("⚡ Planning Bornes Calais")
 
-# Connexion
-conn = st.connection("gsheets", type=GSheetsConnection)
-df = conn.read(ttl=0)
+# Lecture simple (toujours gratuit)
+df = pd.read_csv(SHEET_CSV).fillna("")
 
-# Nettoyage de sécurité pour éviter les erreurs de tes photos
-for col in ['Statut', 'Utilisateur', 'Heure de fin', 'Suivant']:
-    if col not in df.columns: df[col] = ""
-    df[col] = df[col].astype(str).replace('nan', '')
-
-# Affichage simple
 for index, row in df.iterrows():
     with st.expander(f"📍 {row['Borne']} - {row['Statut']}"):
-        st.write(f"👤 Actuel : {row['Utilisateur']} | ⏰ Fin : {row['Heure de fin']}")
-        if row['Suivant']: st.info(f"📅 Réservations : {row['Suivant']}")
+        st.write(f"👤 {row['Utilisateur']} | ⏰ Fin : {row['Heure de fin']}")
         
-        if st.button(f"Libérer {row['Borne']}", key=f"lib_{index}"):
-            df.at[index, 'Statut'], df.at[index, 'Utilisateur'], df.at[index, 'Heure de fin'] = "libre", "", ""
-            conn.update(data=df)
-            st.rerun()
-
-# Formulaire de réservation
-st.divider()
-with st.form("resa"):
-    b = st.selectbox("Borne", df['Borne'].unique())
-    nom = st.text_input("Ton prénom")
-    quand = st.text_input("Jour / Heure (ex: Demain 14h)")
-    if st.form_submit_button("Enregistrer"):
-        idx = df[df['Borne'] == b].index[0]
-        df.at[idx, 'Statut'], df.at[idx, 'Utilisateur'], df.at[idx, 'Heure de fin'] = "Occupé", nom, quand
-        conn.update(data=df)
-        st.success("Réservé !")
-        st.rerun()
+        # Formulaire de mise à jour
+        nom = st.text_input("Ton prénom", key=f"n_{index}")
+        quand = st.text_input("Heure/Jour", key=f"q_{index}")
+        
+        if st.button("Enregistrer", key=f"b_{index}"):
+            payload = {
+                "row": index + 1,
+                "borne": row['Borne'],
+                "statut": "Occupé",
+                "utilisateur": nom,
+                "heure": quand,
+                "suivant": row['Suivant']
+            }
+            requests.post(SCRIPT_URL, json=payload)
+            st.success("C'est envoyé ! Rafraîchis la page dans 5 secondes.")
