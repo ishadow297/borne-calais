@@ -5,35 +5,34 @@ import pandas as pd
 st.set_page_config(page_title="Bornes Calais", page_icon="⚡")
 st.title("⚡ Planning des Bornes Calais")
 
-# Connexion au tableur
+# Connexion stable
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Lecture des données
+# Lecture forcée (ttl=0 pour voir les changements en direct)
 df = conn.read(ttl=0)
 
-# Nettoyage de sécurité : on transforme tout en texte pour éviter les erreurs AttributeError
+# PROTECTION : On transforme tout en texte pour éviter les crashs (AttributeError)
 for col in ['Statut', 'Utilisateur', 'Heure de fin', 'Suivant']:
     if col not in df.columns:
         df[col] = ""
-    # On force le format texte et on enlève les erreurs 'nan'
-    df[col] = df[col].astype(str).replace('nan', '')
+    df[col] = df[col].astype(str).replace('nan', '').replace('None', '')
 
 st.header("📍 État des bornes")
 
-# Affichage des bornes
+# Affichage des bornes sous forme de menus déroulants
 for index, row in df.iterrows():
     status = row['Statut'].strip().lower()
-    # Si la case est vide, on considère que c'est libre
+    # Sécurité si la case est mal remplie
     if status not in ['libre', 'occupé']:
         status = 'libre'
         
     with st.expander(f"{row['Borne']} - {'🟢' if status == 'libre' else '🔴'}"):
         col1, col2 = st.columns(2)
         with col1:
-            st.write(f"**Utilisateur :** {row['Utilisateur']}")
+            st.write(f"**Actuel :** {row['Utilisateur']}")
             st.write(f"**Fin :** {row['Heure de fin']}")
             if row['Suivant']:
-                st.info(f"⏳ Réservé pour : {row['Suivant']}")
+                st.warning(f"⏳ Réservé : {row['Suivant']}")
         
         with col2:
             if st.button(f"Libérer {row['Borne']}", key=f"lib_{index}"):
@@ -43,28 +42,31 @@ for index, row in df.iterrows():
                 conn.update(data=df)
                 st.rerun()
 
-# Formulaire de réservation
+# FORMULAIRE POUR RÉSERVER (Aujourd'hui, Demain, etc.)
 st.divider()
 st.header("📅 Réserver un créneau")
 
-with st.form("resa"):
-    borne = st.selectbox("Borne", df['Borne'].unique())
-    type_resa = st.radio("Quand ?", ["Maintenant", "Demain / Plus tard"])
+with st.form("form_planning"):
+    borne_choisie = st.selectbox("Choisir la borne", df['Borne'].unique())
+    moment = st.radio("Quand ?", ["Je me branche MAINTENANT", "Je réserve pour PLUS TARD / DEMAIN"])
     nom = st.text_input("Ton prénom")
-    quand = st.text_input("Heure ou Jour (ex: Demain 10h)")
+    h_fin = st.text_input("Jour et Heure", placeholder="ex: Demain 14h / Mardi matin")
     
-    if st.form_submit_button("Enregistrer"):
-        if nom and quand:
-            idx = df[df['Borne'] == borne].index[0]
-            if type_resa == "Maintenant":
+    if st.form_submit_button("ENREGISTRER"):
+        if nom and h_fin:
+            idx = df[df['Borne'] == borne_choisie].index[0]
+            if moment == "Je me branche MAINTENANT":
                 df.at[idx, 'Statut'] = "Occupé"
                 df.at[idx, 'Utilisateur'] = nom
-                df.at[idx, 'Heure de fin'] = quand
+                df.at[idx, 'Heure de fin'] = h_fin
             else:
-                # On ajoute à la liste des réservations futures
+                # On ajoute la réservation à la suite dans la colonne "Suivant"
                 actuel = df.at[idx, 'Suivant']
-                df.at[idx, 'Suivant'] = f"{actuel} | {nom}({quand})".strip(" | ")
+                nouveau = f"[{nom}: {h_fin}]"
+                df.at[idx, 'Suivant'] = f"{actuel} {nouveau}".strip()
             
             conn.update(data=df)
-            st.success("Réservation enregistrée !")
+            st.success("C'est enregistré dans le planning !")
             st.rerun()
+        else:
+            st.error("Merci de remplir ton nom et l'heure.")
