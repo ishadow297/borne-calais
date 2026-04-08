@@ -4,7 +4,7 @@ import requests
 from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
-SCRIPT_URL = "TON_URL_APPS_SCRIPT_ICI"
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwfr__TekrEpJGmVEu1SvGqRVIppFOQDQJ_MUp7_lwxSRDZ5NAFVlnoThtybQ7IuZlM/exec"
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/export?format=csv"
 
 st.set_page_config(page_title="Planning Bornes Calais", page_icon="⚡")
