@@ -8,7 +8,7 @@ SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwfr__TekrEpJGmVEu1SvGqRVI
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/export?format=csv"
 
 st.set_page_config(page_title="Bornes Automatiques", page_icon="⚡")
-st.title("⚡ Planning Auto-Nettoyant")
+st.title("⚡ Planning Borne calais")
 
 # Gestion de l'heure actuelle (France)
 now = datetime.now() + timedelta(hours=0) # Ajuste si le serveur n'est pas à l'heure
