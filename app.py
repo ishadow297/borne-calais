@@ -3,45 +3,51 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 
-# --- CONFIGURATION (N'oublie pas ton URL) ---
+# --- CONFIGURATION (N'oublie pas ton URL de script) ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwfr__TekrEpJGmVEu1SvGqRVIppFOQDQJ_MUp7_lwxSRDZ5NAFVlnoThtybQ7IuZlM/exec"
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/export?format=csv"
 
 st.set_page_config(page_title="Planning Bornes", page_icon="⚡")
-st.title("⚡ Planning Auto-Géré")
+st.title("⚡ Planning Bornes Calais")
 
-# --- GESTION DU TEMPS ---
-# On récupère la date et l'heure actuelle (France)
-now = datetime.now() + timedelta(hours=0) # Ajuste à +1 ou +2 si l'heure est décalée
+# --- RÉGLAGE DE L'HEURE (FRANCE +2h) ---
+# On ajuste ici pour qu'il soit bien 1h23 du matin si c'est l'heure chez toi
+now = datetime.utcnow() + timedelta(hours=2) 
 date_aujourdhui = now.strftime("%d/%m")
 date_demain = (now + timedelta(days=1)).strftime("%d/%m")
+heure_actuelle = now.strftime("%H:%M")
 
 # Lecture du fichier
-df = pd.read_csv(SHEET_CSV).fillna("")
+try:
+    df = pd.read_csv(f"{SHEET_CSV}&cache={now.second}").fillna("")
+except:
+    st.error("Erreur de connexion au Sheets.")
+    st.stop()
 
 # --- AFFICHAGE DES BORNES ---
-st.header(f"📅 Aujourd'hui, le {date_aujourdhui}")
+st.header(f"🕒 Il est {heure_actuelle} le {date_aujourdhui}")
 
 for index, row in df.iterrows():
-    # On vérifie si la borne est périmée (Heure de fin passée le même jour)
     borne_libre = True
     info_occupant = ""
     
+    # On vérifie si une charge est en cours
     if str(row['Statut']).lower() == "occupé":
-        # Format attendu dans le Sheets pour l'heure de fin : "Jour - HH:MM"
         try:
-            date_fin_str = str(row['Heure de fin']) # ex: "09/04 - 14:00"
-            if " - " in date_fin_str:
-                jour_fin, heure_fin = date_fin_str.split(" - ")
+            # Format dans le Sheets : "JJ/MM | 08:00 >> 10:00"
+            date_info = str(row['Heure de fin'])
+            if " | " in date_info:
+                jour_brut, heures_brut = date_info.split(" | ")
+                h_debut, h_fin = heures_brut.split(" >> ")
                 
-                # Si c'est aujourd'hui et que l'heure est passée, on libère
-                if jour_fin == date_aujourdhui and now.strftime("%H:%M") > heure_fin:
+                # Si c'est aujourd'hui et que l'heure de FIN est passée, on libère
+                if jour_brut == date_aujourdhui and heure_actuelle > h_fin:
                     borne_libre = True
                 else:
                     borne_libre = False
-                    info_occupant = f"👤 {row['Utilisateur']} jusqu'à {heure_fin} ({jour_fin})"
+                    info_occupant = f"👤 **{row['Utilisateur']}** : {h_debut} à {h_fin} ({jour_brut})"
             else:
-                borne_libre = False # Sécurité pour le texte libre
+                borne_libre = False
         except:
             borne_libre = False
 
@@ -50,7 +56,7 @@ for index, row in df.iterrows():
         with col1:
             icon = "🟢" if borne_libre else "🔴"
             st.subheader(f"{icon} {row['Borne']}")
-            st.write(info_occupant if not borne_libre else "✅ Libre")
+            st.write(info_occupant if not borne_libre else "✅ Disponible")
         
         with col2:
             if not borne_libre:
@@ -59,25 +65,27 @@ for index, row in df.iterrows():
                     requests.post(SCRIPT_URL, json=payload)
                     st.rerun()
 
-# --- RÉSERVATION (CRENEAUX) ---
+# --- RÉSERVATION ---
 st.divider()
 st.header("📅 Réserver un créneau")
 
+# Liste d'heures (00:00 à 23:30)
+heures_list = [f"{h:02d}:{m:02d}" for h in range(0, 24) for m in (0, 30)]
+
 with st.form("form_resa"):
-    choix_borne = st.selectbox("Quelle borne ?", df['Borne'].unique())
-    choix_jour = st.radio("Quel jour ?", [f"Aujourd'hui ({date_aujourdhui})", f"Demain ({date_demain})"])
+    choix_borne = st.selectbox("Borne", df['Borne'].unique())
+    choix_jour = st.radio("Jour", [f"Aujourd'hui ({date_aujourdhui})", f"Demain ({date_demain})"])
     nom = st.text_input("Ton prénom")
     
-    # Génération d'une liste d'heures (07:00 à 22:00)
-    heures_list = [f"{h:02d}:00" for h in range(7, 23)] + [f"{h:02d}:30" for h in range(7, 23)]
-    heures_list.sort()
-    choix_heure = st.selectbox("Heure de FIN de charge", heures_list)
+    c1, c2 = st.columns(2)
+    h_start = c1.selectbox("Début de charge", heures_list, index=16) # Par défaut 08:00
+    h_end = c2.selectbox("Fin de charge", heures_list, index=20)   # Par défaut 10:00
     
-    if st.form_submit_button("VALIDER LA RÉSERVATION"):
-        if nom:
-            # On extrait juste la date "JJ/MM"
+    if st.form_submit_button("VALIDER"):
+        if nom and h_start < h_end:
             jour_final = choix_jour.split(" (")[1].replace(")", "")
-            heure_finale = f"{jour_final} - {choix_heure}"
+            # On enregistre tout dans la colonne 'Heure de fin' pour le calcul
+            format_sheets = f"{jour_final} | {h_start} >> {h_end}"
             
             idx = df[df['Borne'] == choix_borne].index[0]
             payload = {
@@ -85,9 +93,11 @@ with st.form("form_resa"):
                 "borne": choix_borne,
                 "statut": "Occupé",
                 "utilisateur": nom,
-                "heure": heure_finale,
+                "heure": format_sheets,
                 "suivant": ""
             }
             requests.post(SCRIPT_URL, json=payload)
-            st.success(f"Réservé pour {nom} jusqu'à {choix_heure} le {jour_final}")
+            st.success(f"Réservé ! {nom} de {h_start} à {h_end}")
             st.rerun()
+        else:
+            st.error("Vérifie ton nom ou l'heure (le début doit être avant la fin) !")
