@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
+import pytz # Import indispensable pour l'heure française
 
 # --- CONFIGURATION ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwfr__TekrEpJGmVEu1SvGqRVIppFOQDQJ_MUp7_lwxSRDZ5NAFVlnoThtybQ7IuZlM/exec"
@@ -10,55 +11,54 @@ SHEET_CSV = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHI
 st.set_page_config(page_title="Planning Bornes Calais", page_icon="⚡")
 st.title("⚡ Planning Intelligent Calais")
 
-# --- RÉGLAGE DE L'HEURE (FRANCE +2h) ---
-now = datetime.utcnow() + timedelta(hours=2) 
+# --- RÉGLAGE DE L'HEURE (FRANCE - EUROPE/PARIS) ---
+tz_france = pytz.timezone('Europe/Paris')
+now = datetime.now(tz_france)
+
 date_aujourdhui = now.strftime("%d/%m")
-date_demain = (now + timedelta(days=1)).strftime("%d/%m")
+date_demain = (now + pd.Timedelta(days=1)).strftime("%d/%m")
 heure_actuelle = now.strftime("%H:%M")
 
 # Lecture du fichier
 df = pd.read_csv(f"{SHEET_CSV}&cache={now.second}").fillna("")
 
-st.header(f"🕒 {heure_actuelle} ({date_aujourdhui})")
+# Affichage de la date confirmée
+st.header(f"📅 Aujourd'hui : {date_aujourdhui} | 🕒 {heure_actuelle}")
 
-# --- LOGIQUE DE NETTOYAGE ET PASSAGE AU SUIVANT ---
+# --- LOGIQUE DE NETTOYAGE AUTO ---
 for index, row in df.iterrows():
     statut = str(row['Statut']).lower()
-    h_fin_actuelle = ""
     borne_doit_etre_liberee = False
 
-    # On vérifie si l'occupant actuel a fini
     if statut == "occupé":
         try:
             date_info = str(row['Heure de fin'])
             if " | " in date_info:
                 jour_f, heures_f = date_info.split(" | ")
                 _, h_fin = heures_f.split(" >> ")
+                
+                # Comparaison : si le jour est arrivé/passé ET l'heure est passée
+                # Note: On transforme les dates en format comparable si besoin
                 if jour_f == date_aujourdhui and heure_actuelle > h_fin:
+                    borne_doit_etre_liberee = True
+                elif jour_f < date_aujourdhui: # Si c'est un vieux reste d'hier
                     borne_doit_etre_liberee = True
         except:
             pass
 
-    # SI LA BORNE EST PÉRIMÉE : On nettoie automatiquement via le script
     if borne_doit_etre_liberee:
-        # On regarde s'il y a quelqu'un dans la file pour prendre la place
         file = str(row['Suivant'])
-        nouveau_statut = "libre"
-        nouvel_user = ""
-        nouvelle_heure = ""
-        nouvelle_file = ""
+        nouveau_statut, nouvel_user, nouvelle_heure, nouvelle_file = "libre", "", "", ""
 
         if file:
             resas = file.split(" | ")
-            prochaine = resas[0].replace("• ", "") # On prend la 1ère résa
-            # On essaie d'extraire Nom (Heure)
+            prochaine = resas[0].replace("• ", "")
             if "(" in prochaine:
                 nouvel_user = prochaine.split(" (")[0]
                 nouvelle_heure = prochaine.split("(")[1].replace(")", "")
                 nouveau_statut = "Occupé"
-                nouvelle_file = " | ".join(resas[1:]) # On garde le reste de la file
+                nouvelle_file = " | ".join(resas[1:])
         
-        # Envoi automatique de la mise à jour sans bouton
         payload = {
             "row": index+1, "borne": row['Borne'], "statut": nouveau_statut,
             "utilisateur": nouvel_user, "heure": nouvelle_heure, "suivant": nouvelle_file
@@ -97,23 +97,14 @@ with st.form("form_resa"):
             jour_f = choix_jour.split(" (")[1].replace(")", "")
             nouveau_creneau = f"{jour_f} | {h_start} >> {h_end}"
             
-            # On ajoute TOUJOURS à la file pour ne pas écraser l'actuel
             file_actuelle = str(df.iloc[idx]['Suivant'])
-            # Si la borne est libre maintenant, on peut remplir l'actuel
             if str(df.iloc[idx]['Statut']).lower() == "libre":
-                 payload = {
-                    "row": idx + 1, "borne": choix_borne, "statut": "Occupé",
-                    "utilisateur": nom, "heure": nouveau_creneau, "suivant": file_actuelle
-                }
+                 payload = {"row": idx + 1, "borne": choix_borne, "statut": "Occupé", "utilisateur": nom, "heure": nouveau_creneau, "suivant": file_actuelle}
             else:
                 info_resa = f"• {nom} ({nouveau_creneau})"
                 nouvelle_file = f"{file_actuelle} | {info_resa}".strip(" | ")
-                payload = {
-                    "row": idx + 1, "borne": choix_borne, "statut": df.iloc[idx]['Statut'],
-                    "utilisateur": df.iloc[idx]['Utilisateur'], "heure": df.iloc[idx]['Heure de fin'],
-                    "suivant": nouvelle_file
-                }
+                payload = {"row": idx + 1, "borne": choix_borne, "statut": df.iloc[idx]['Statut'], "utilisateur": df.iloc[idx]['Utilisateur'], "heure": df.iloc[idx]['Heure de fin'], "suivant": nouvelle_file}
             
             requests.post(SCRIPT_URL, json=payload)
-            st.success("Réservation ajoutée au planning !")
+            st.success("Réservation ajoutée !")
             st.rerun()
