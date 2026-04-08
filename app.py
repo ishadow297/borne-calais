@@ -3,76 +3,91 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION (N'oublie pas ton URL) ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwfr__TekrEpJGmVEu1SvGqRVIppFOQDQJ_MUp7_lwxSRDZ5NAFVlnoThtybQ7IuZlM/exec"
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/export?format=csv"
 
-st.set_page_config(page_title="Bornes Automatiques", page_icon="⚡")
-st.title("⚡ Planning Borne calais")
+st.set_page_config(page_title="Planning Bornes", page_icon="⚡")
+st.title("⚡ Planning Auto-Géré")
 
-# Gestion de l'heure actuelle (France)
-now = datetime.now() + timedelta(hours=0) # Ajuste si le serveur n'est pas à l'heure
-heure_actuelle = now.strftime("%H:%M")
+# --- GESTION DU TEMPS ---
+# On récupère la date et l'heure actuelle (France)
+now = datetime.now() + timedelta(hours=0) # Ajuste à +1 ou +2 si l'heure est décalée
+date_aujourdhui = now.strftime("%d/%m")
+date_demain = (now + timedelta(days=1)).strftime("%d/%m")
 
-# Lecture des données
+# Lecture du fichier
 df = pd.read_csv(SHEET_CSV).fillna("")
 
-# --- FONCTION DE NETTOYAGE AUTO ---
-def check_status(row):
-    if str(row['Statut']).lower() == "occupé":
-        # Si l'heure actuelle est plus grande que l'heure de fin, on libère visuellement
-        if heure_actuelle > str(row['Heure de fin']):
-            return "libre"
-    return row['Statut']
-
-# --- AFFICHAGE ---
-st.header(f"🕒 Il est {heure_actuelle}")
+# --- AFFICHAGE DES BORNES ---
+st.header(f"📅 Aujourd'hui, le {date_aujourdhui}")
 
 for index, row in df.iterrows():
-    statut_reel = check_status(row)
-    is_libre = statut_reel.lower() == "libre"
+    # On vérifie si la borne est périmée (Heure de fin passée le même jour)
+    borne_libre = True
+    info_occupant = ""
     
+    if str(row['Statut']).lower() == "occupé":
+        # Format attendu dans le Sheets pour l'heure de fin : "Jour - HH:MM"
+        try:
+            date_fin_str = str(row['Heure de fin']) # ex: "09/04 - 14:00"
+            if " - " in date_fin_str:
+                jour_fin, heure_fin = date_fin_str.split(" - ")
+                
+                # Si c'est aujourd'hui et que l'heure est passée, on libère
+                if jour_fin == date_aujourdhui and now.strftime("%H:%M") > heure_fin:
+                    borne_libre = True
+                else:
+                    borne_libre = False
+                    info_occupant = f"👤 {row['Utilisateur']} jusqu'à {heure_fin} ({jour_fin})"
+            else:
+                borne_libre = False # Sécurité pour le texte libre
+        except:
+            borne_libre = False
+
     with st.container(border=True):
         col1, col2 = st.columns([2, 1])
-        
         with col1:
-            icon = "🟢" if is_libre else "🔴"
+            icon = "🟢" if borne_libre else "🔴"
             st.subheader(f"{icon} {row['Borne']}")
-            if not is_libre:
-                st.write(f"👤 **{row['Utilisateur']}** jusqu'à **{row['Heure de fin']}**")
-            else:
-                st.write("✅ Disponible")
+            st.write(info_occupant if not borne_libre else "✅ Libre")
         
         with col2:
-            if not is_libre:
-                if st.button("Libérer maintenant", key=f"btn_{index}"):
-                    payload = {"row": index + 1, "borne": row['Borne'], "statut": "libre", "utilisateur": "", "heure": "", "suivant": row['Suivant']}
+            if not borne_libre:
+                if st.button("Libérer", key=f"lib_{index}"):
+                    payload = {"row": index+1, "borne": row['Borne'], "statut": "libre", "utilisateur": "", "heure": "", "suivant": ""}
                     requests.post(SCRIPT_URL, json=payload)
                     st.rerun()
 
-# --- RÉSERVATION ---
+# --- RÉSERVATION (CRENEAUX) ---
 st.divider()
-st.subheader("📅 Se brancher")
+st.header("📅 Réserver un créneau")
 
-# Liste d'heures toutes les 30min
-heures_possibles = [(datetime.now() + timedelta(minutes=x)).strftime("%H:%M") for x in range(30, 480, 30)]
-
-with st.form("resa"):
-    b_nom = st.selectbox("Borne", df['Borne'].unique())
+with st.form("form_resa"):
+    choix_borne = st.selectbox("Quelle borne ?", df['Borne'].unique())
+    choix_jour = st.radio("Quel jour ?", [f"Aujourd'hui ({date_aujourdhui})", f"Demain ({date_demain})"])
     nom = st.text_input("Ton prénom")
-    h_fin = st.selectbox("Heure de fin prévue", heures_possibles)
     
-    if st.form_submit_button("VALIDER"):
+    # Génération d'une liste d'heures (07:00 à 22:00)
+    heures_list = [f"{h:02d}:00" for h in range(7, 23)] + [f"{h:02d}:30" for h in range(7, 23)]
+    heures_list.sort()
+    choix_heure = st.selectbox("Heure de FIN de charge", heures_list)
+    
+    if st.form_submit_button("VALIDER LA RÉSERVATION"):
         if nom:
-            idx = df[df['Borne'] == b_nom].index[0]
+            # On extrait juste la date "JJ/MM"
+            jour_final = choix_jour.split(" (")[1].replace(")", "")
+            heure_finale = f"{jour_final} - {choix_heure}"
+            
+            idx = df[df['Borne'] == choix_borne].index[0]
             payload = {
                 "row": idx + 1,
-                "borne": b_nom,
+                "borne": choix_borne,
                 "statut": "Occupé",
                 "utilisateur": nom,
-                "heure": h_fin,
-                "suivant": "" # On peut vider la file ici pour simplifier
+                "heure": heure_finale,
+                "suivant": ""
             }
             requests.post(SCRIPT_URL, json=payload)
-            st.success(f"C'est noté {nom} ! Borne réservée jusqu'à {h_fin}")
+            st.success(f"Réservé pour {nom} jusqu'à {choix_heure} le {jour_final}")
             st.rerun()
