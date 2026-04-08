@@ -10,7 +10,7 @@ st.title("⚡ Bornes Gratuites - Calais")
 
 # --- CHARGEMENT DES DONNÉES ---
 # On transforme le lien pour lire le CSV en direct
-csv_url = SHEET_URL.replace('/edit#gid=', '/export?format=csv&gid=')
+csv_url = SHEET_URL.replace('/edit?usp=sharing','/export?format=csv=')
 df = pd.read_csv(csv_url)
 
 # --- AFFICHAGE ---
