@@ -1,90 +1,78 @@
 import streamlit as st
 import pandas as pd
 import requests
+from datetime import datetime, timedelta
 
-# Garde bien ton URL Apps Script ici
+# --- CONFIGURATION ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwfr__TekrEpJGmVEu1SvGqRVIppFOQDQJ_MUp7_lwxSRDZ5NAFVlnoThtybQ7IuZlM/exec"
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/export?format=csv"
 
-st.set_page_config(page_title="Planning Bornes", page_icon="⚡")
-st.title("⚡ Planning Bornes Calais")
+st.set_page_config(page_title="Bornes Automatiques", page_icon="⚡")
+st.title("⚡ Planning Auto-Nettoyant")
 
-# Lecture des données (on force le rafraîchissement avec un paramètre aléatoire)
-df = pd.read_csv(f"{SHEET_CSV}&cache={st.secrets.get('cache_key', 0)}").fillna("")
+# Gestion de l'heure actuelle (France)
+now = datetime.now() + timedelta(hours=0) # Ajuste si le serveur n'est pas à l'heure
+heure_actuelle = now.strftime("%H:%M")
 
-# --- AFFICHAGE DES BORNES ---
-st.header("📍 État et Liste d'attente")
+# Lecture des données
+df = pd.read_csv(SHEET_CSV).fillna("")
+
+# --- FONCTION DE NETTOYAGE AUTO ---
+def check_status(row):
+    if str(row['Statut']).lower() == "occupé":
+        # Si l'heure actuelle est plus grande que l'heure de fin, on libère visuellement
+        if heure_actuelle > str(row['Heure de fin']):
+            return "libre"
+    return row['Statut']
+
+# --- AFFICHAGE ---
+st.header(f"🕒 Il est {heure_actuelle}")
 
 for index, row in df.iterrows():
-    status = str(row['Statut']).strip().lower()
-    is_libre = status == "libre"
-    icon = "🟢" if is_libre else "🔴"
+    statut_reel = check_status(row)
+    is_libre = statut_reel.lower() == "libre"
     
-    with st.expander(f"{icon} {row['Borne']} - {status.upper()}"):
-        col1, col2 = st.columns(2)
+    with st.container(border=True):
+        col1, col2 = st.columns([2, 1])
         
         with col1:
+            icon = "🟢" if is_libre else "🔴"
+            st.subheader(f"{icon} {row['Borne']}")
             if not is_libre:
-                st.write(f"👤 **En charge :** {row['Utilisateur']}")
-                st.write(f"⏰ **Fin prévue :** {row['Heure de fin']}")
-            
-            # Affichage de la liste d'attente
-            if row['Suivant']:
-                st.warning(f"⏳ **Liste d'attente :**\n{row['Suivant']}")
+                st.write(f"👤 **{row['Utilisateur']}** jusqu'à **{row['Heure de fin']}**")
             else:
-                st.write("✨ Aucune attente pour cette borne.")
-
+                st.write("✅ Disponible")
+        
         with col2:
-            # Bouton pour libérer la borne complètement
-            if st.button(f"Libérer {row['Borne']}", key=f"lib_{index}"):
-                payload = {
-                    "row": index + 1,
-                    "borne": row['Borne'],
-                    "statut": "libre",
-                    "utilisateur": "",
-                    "heure": "",
-                    "suivant": row['Suivant'] # On garde la file d'attente même si on libère
-                }
-                requests.post(SCRIPT_URL, json=payload)
-                st.rerun()
+            if not is_libre:
+                if st.button("Libérer maintenant", key=f"btn_{index}"):
+                    payload = {"row": index + 1, "borne": row['Borne'], "statut": "libre", "utilisateur": "", "heure": "", "suivant": row['Suivant']}
+                    requests.post(SCRIPT_URL, json=payload)
+                    st.rerun()
 
-# --- FORMULAIRE DE RÉSERVATION ---
+# --- RÉSERVATION ---
 st.divider()
-st.header("📅 Réserver ou s'ajouter à la file")
+st.subheader("📅 Se brancher")
 
-with st.form("resa_form"):
-    borne_nom = st.selectbox("Choisir la borne", df['Borne'].unique())
-    type_action = st.radio("Action", ["Prendre la borne (Maintenant)", "S'ajouter à la liste d'attente (Plus tard)"])
+# Liste d'heures toutes les 30min
+heures_possibles = [(datetime.now() + timedelta(minutes=x)).strftime("%H:%M") for x in range(30, 480, 30)]
+
+with st.form("resa"):
+    b_nom = st.selectbox("Borne", df['Borne'].unique())
     nom = st.text_input("Ton prénom")
-    quand = st.text_input("Heure ou Jour (ex: Demain 10h)")
+    h_fin = st.selectbox("Heure de fin prévue", heures_possibles)
     
     if st.form_submit_button("VALIDER"):
-        if nom and quand:
-            idx = df[df['Borne'] == borne_nom].index[0]
-            current_row = df.iloc[idx]
-            
-            if type_action == "Prendre la borne (Maintenant)":
-                payload = {
-                    "row": idx + 1,
-                    "borne": borne_nom,
-                    "statut": "Occupé",
-                    "utilisateur": nom,
-                    "heure": quand,
-                    "suivant": current_row['Suivant']
-                }
-            else:
-                # On ajoute à la liste d'attente existante
-                file_actuelle = str(current_row['Suivant'])
-                nouvelle_file = f"{file_actuelle} | {nom}({quand})".strip(" | ")
-                payload = {
-                    "row": idx + 1,
-                    "borne": borne_nom,
-                    "statut": current_row['Statut'],
-                    "utilisateur": current_row['Utilisateur'],
-                    "heure": current_row['Heure de fin'],
-                    "suivant": nouvelle_file
-                }
-            
+        if nom:
+            idx = df[df['Borne'] == b_nom].index[0]
+            payload = {
+                "row": idx + 1,
+                "borne": b_nom,
+                "statut": "Occupé",
+                "utilisateur": nom,
+                "heure": h_fin,
+                "suivant": "" # On peut vider la file ici pour simplifier
+            }
             requests.post(SCRIPT_URL, json=payload)
-            st.success("Planning mis à jour !")
+            st.success(f"C'est noté {nom} ! Borne réservée jusqu'à {h_fin}")
             st.rerun()
