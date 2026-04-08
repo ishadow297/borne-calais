@@ -1,52 +1,64 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import urllib.parse
 
-st.set_page_config(page_title="Bornes Calais", page_icon="⚡")
-st.title("⚡ Bornes Gratuites - Calais")
+st.set_page_config(page_title="Planning Bornes Calais", page_icon="⚡")
+st.title("⚡ Planning des Bornes")
 
-# --- CONFIGURATION ---
-SHEET_ID = "1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo"
-SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv"
+# Connexion au fichier
+conn = st.connection("gsheets", type=GSheetsConnection)
+df = conn.read(ttl=0)
 
-# Lecture des données
-try:
-    df = pd.read_csv(SHEET_URL)
-except:
-    st.error("Problème de lecture du tableau.")
-    st.stop()
+# Nettoyage des colonnes au cas où
+for c in ['Statut', 'Utilisateur', 'Heure de fin', 'Suivant']:
+    if c not in df.columns:
+        df[c] = ""
 
-# Sécurité colonnes
-for col in ['Statut', 'Utilisateur', 'Heure de fin', 'Suivant']:
-    if col not in df.columns:
-        df[col] = ""
-
-st.subheader("État des bornes")
-
+# --- PARTIE 1 : ÉTAT ACTUEL ---
+st.header("📍 État des bornes (Maintenant)")
 for index, row in df.iterrows():
-    col1, col2 = st.columns([1.5, 1])
-    status = str(row['Statut']).strip().lower()
-    borne = row['Borne']
-    
-    with col1:
-        icon = "🟢" if status == "libre" else "🔴"
-        st.write(f"### {borne}")
-        st.write(f"{icon} **{status.upper()}**")
-        if status != "libre":
-            st.write(f"👤 {row['Utilisateur']} | ⏰ Fin : {row['Heure de fin']}")
-        if pd.notna(row['Suivant']) and str(row['Suivant']) != "" and str(row['Suivant']) != "nan":
-            st.warning(f"⏳ Prochain : {row['Suivant']}")
-
-    with col2:
-        # Pour simplifier et éviter les erreurs de droits, on utilise un bouton WhatsApp
-        # qui pré-remplit le message pour toi
-        msg = f"Je réserve la borne {borne}"
-        link = f"https://wa.me/336XXXXXXXX?text={urllib.parse.quote(msg)}" # Remplace par ton numéro
+    with st.expander(f"{row['Borne']} - {'🟢 LIBRE' if str(row['Statut']).lower() == 'libre' else '🔴 OCCUPÉ'}"):
+        col1, col2 = st.columns(2)
         
-        if status == "libre":
-            st.link_button("🚀 Réserver (WhatsApp)", link, use_container_width=True)
-        else:
-            st.link_button("⏳ Prendre mon tour", link, use_container_width=True)
-    st.divider()
+        with col1:
+            st.write(f"**Actuel :** {row['Utilisateur']}")
+            st.write(f"**Fin prévue :** {row['Heure de fin']}")
+            if pd.notna(row['Suivant']) and row['Suivant'] != "":
+                st.info(f"⏳ Prochain : {row['Suivant']}")
 
-st.info("Note : Pour mettre à jour le statut, changez-le directement dans le Google Sheets partagé.")
+        with col2:
+            if st.button(f"Libérer {row['Borne']}", key=f"lib_{index}"):
+                df.at[index, 'Statut'] = "libre"
+                df.at[index, 'Utilisateur'] = ""
+                df.at[index, 'Heure de fin'] = ""
+                df.at[index, 'Suivant'] = ""
+                conn.update(data=df)
+                st.rerun()
+
+# --- PARTIE 2 : RÉSERVATION / MISE À JOUR ---
+st.divider()
+st.header("📝 Réserver ou mettre à jour")
+
+with st.form("form_reservation"):
+    borne_choisie = st.selectbox("Choisir la borne", df['Borne'].unique())
+    type_action = st.radio("Action", ["Je me branche maintenant", "Je réserve pour plus tard / demain"])
+    nom = st.text_input("Ton prénom")
+    details = st.text_input("Heure de fin (ou jour/heure pour plus tard)", placeholder="ex: Aujourd'hui 18h ou Demain 10h")
+    
+    submit = st.form_submit_button("Enregistrer")
+    
+    if submit:
+        if nom and details:
+            idx = df[df['Borne'] == borne_choisie].index[0]
+            if type_action == "Je me branche maintenant":
+                df.at[idx, 'Statut'] = "Occupé"
+                df.at[idx, 'Utilisateur'] = nom
+                df.at[idx, 'Heure de fin'] = details
+            else:
+                df.at[idx, 'Suivant'] = f"{nom} ({details})"
+            
+            conn.update(data=df)
+            st.success("C'est enregistré ! Le planning est à jour.")
+            st.rerun()
+        else:
+            st.error("Merci de remplir ton nom et l'heure.")
