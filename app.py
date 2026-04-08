@@ -1,43 +1,57 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime
-
-# --- CONFIGURATION ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/edit?usp=sharing"
 
 st.set_page_config(page_title="Bornes Calais", page_icon="⚡")
 st.title("⚡ Bornes Gratuites - Calais")
 
-# --- CHARGEMENT DES DONNÉES ---
-# Extraction de l'ID du document pour un export propre
-sheet_id = "1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo"
-csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+# Connexion au Google Sheets
+url = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/edit?usp=sharing"
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-try:
-    df = pd.read_csv(csv_url)
-except Exception as e:
-    st.error("Impossible de lire le Google Sheets. Vérifie qu'il est bien partagé en 'Tous les utilisateurs disposant du lien'.")
-    st.stop()
+# Lecture des données (on désactive le cache pour voir les modifs direct)
+df = conn.read(spreadsheet=url, ttl=0)
 
-
-# --- AFFICHAGE ---
 st.subheader("État des bornes en temps réel")
 
 for index, row in df.iterrows():
-    col1, col2, col3 = st.columns([2, 1, 1])
+    col1, col2 = st.columns([1.5, 1])
+    
+    status = str(row['Statut']).strip().lower()
+    icon = "🟢" if status == "libre" else "🔴"
+    
+    # Préparation du texte d'affichage
+    info_user = ""
+    if status != "libre":
+        user = row['Utilisateur'] if pd.notna(row['Utilisateur']) else "Inconnu"
+        heure = row['Heure de fin'] if pd.notna(row['Heure de fin']) else "--h--"
+        info_user = f"\n\n👤 {user} | ⏰ Fin : {heure}"
 
     with col1:
-        st.write(f"**{row['Borne']}**")
-        status_color = "🟢" if row['Statut'] == "Libre" else "🔴"
-        st.write(f"{status_color} {row['Statut']}")
+        st.write(f"### {row['Borne']}")
+        st.write(f"{icon} **{row['Statut'].upper()}**{info_user}")
 
     with col2:
-        if row['Statut'] == "Occupé":
-            st.write(f"👤 {row['Utilisateur']}")
-            st.write(f"⏰ Fin: {row['Heure de fin']}")
-
-    with col3:
-        if row['Statut'] == "Libre":
-            if st.button(f"Réserver", key=f"btn_{index}"):
-                st.info("Pour réserver, envoie un message sur WhatsApp (Lien auto bientôt !)")
-
+        if status == "libre":
+            nom = st.text_input("Prénom", key=f"nom_{index}", placeholder="Ton nom")
+            heure_saisie = st.text_input("Heure de fin", key=f"h_{index}", placeholder="ex: 14h30")
+            
+            if st.button("Réserver", key=f"btn_{index}", use_container_width=True):
+                if nom and heure_saisie:
+                    df.at[index, 'Statut'] = "Occupé"
+                    df.at[index, 'Utilisateur'] = nom
+                    df.at[index, 'Heure de fin'] = heure_saisie
+                    conn.update(spreadsheet=url, data=df)
+                    st.success("Réservé !")
+                    st.rerun()
+                else:
+                    st.warning("Remplis le nom et l'heure !")
+        else:
+            if st.button("Libérer la borne", key=f"lib_{index}", use_container_width=True):
+                df.at[index, 'Statut'] = "libre"
+                df.at[index, 'Utilisateur'] = ""
+                df.at[index, 'Heure de fin'] = ""
+                conn.update(spreadsheet=url, data=df)
+                st.info("Borne libérée")
+                st.rerun()
+    st.divider()
