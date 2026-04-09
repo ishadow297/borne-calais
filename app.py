@@ -5,8 +5,8 @@ from datetime import datetime
 import pytz
 
 # --- CONFIGURATION ---
-SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwfr__TekrEpJGmVEu1SvGqRVIppFOQDQJ_MUp7_lwxSRDZ5NAFVlnoThtybQ7IuZlM/exec"
-SHEET_CSV = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/export?format=csv"
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycby0LYnrfJWcZqsKjDbTHNzlEhwkiM01eqRCcs-WJDWjXu-V0OhPE7Fv8RIm8hdHIamF/exec"
+SHEET_CSV = "https://docs.google.com/spreadsheets/d/1jnx8Jy_abkZuMdoEkJPn8fjL6QmlbRknder9PkAj14k/edit?usp=sharing"
 
 st.set_page_config(page_title="Bornes Calais Pro", page_icon="⚡", layout="centered")
 
