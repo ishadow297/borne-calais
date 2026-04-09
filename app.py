@@ -3,9 +3,8 @@ from supabase import create_client
 from datetime import datetime
 import pytz, time
 
-# --- CONFIGURATION ---
-U = "https://bbdflpdeehgbgqqqdvnu.supabase.co"
-K = "sb_publishable_APMQsSWxuWQ_r961_T8i6g_CeEe41Yz"
+# --- CONFIG ---
+U, K = "hhttps://bbdflpdeehgbgqqqdvnu.supabase.co", "sb_publishable_APMQsSWxuWQ_r961_T8i6g_CeEe41Yz"
 
 try:
     db = create_client(U, K)
@@ -40,7 +39,6 @@ def auto(data):
             db.table("bornes").update({"statut":"occupé" if u else "libre","utilisateur":u or "","fin":hf,"suivant":" | ".join(nf)}).eq("id",bid).execute()
 
 st.title("⚡ Bornes Calais Pro")
-
 try:
     res = db.table("bornes").select("*").order("id").execute()
     d = res.data
@@ -53,7 +51,6 @@ for b in d:
     bid, s = str(b['id']), str(b['statut']).lower()
     c = "#ffcccc" if s=="panne" else ("#f8d7da" if s=="occupé" else "#d4edda")
     m = f"🔴 {b['utilisateur']} (fin:{b['fin']})" if s=="occupé" else ("❌ PANNE" if s=="panne" else "🟢 LIBRE")
-    
     st.markdown(f'<div style="padding:15px;border-radius:10px;background:{c};color:black;margin-bottom:10px"><b>{b["nom"]}</b><br>{m}</div>', unsafe_allow_html=True)
 
     c1, c2 = st.columns(2)
@@ -64,4 +61,14 @@ for b in d:
             st.rerun()
     with c2:
         if s == "libre":
-            if st.button("🚗 Occuper", key="o"+bid, use_container_width=
+            if st.button("🚗 Occuper", key="o"+bid, use_container_width=True):
+                db.table("bornes").update({"statut":"occupé","utilisateur":"Manuel","fin":"--"}).eq("id",bid).execute()
+                st.rerun()
+        else:
+            if st.button("✅ Libérer", key="l"+bid, use_container_width=True):
+                db.table("bornes").update({"statut":"libre","utilisateur":"","fin":""}).eq("id",bid).execute()
+                st.rerun()
+
+    with st.expander("📅 Réserver"):
+        with st.form(key="f"+bid, clear_on_submit=True):
+            n = st.text_input("
