@@ -21,11 +21,13 @@ now = datetime.now(tz)
 # --- 2. L'AUTOMATE DE PILOTAGE ---
 def piloter_bornes(bornes_data):
     for b in bornes_data:
+        bid = str(b['id'])
         file = b.get('suivant') or ""
-        if not file or file.strip() == "-" or file.strip() == "":
-            # Si vide, on s'assure que la borne est libre (si pas en panne)
+        
+        # Si la file est vide, on s'assure que la borne est libre (si pas en panne)
+        if not file or file.strip() in ["", "-"]:
             if b['statut'] != "panne" and b['statut'] != "libre":
-                supabase.table("bornes").update({"statut": "libre", "utilisateur": "", "fin": ""}).eq("id", b['id']).execute()
+                supabase.table("bornes").update({"statut": "libre", "utilisateur": "", "fin": ""}).eq("id", bid).execute()
             continue
         
         reservations = [r.strip() for r in file.split("|") if r.strip()]
@@ -50,10 +52,9 @@ def piloter_bornes(bornes_data):
                     nouvelle_file.append(res) 
                 elif dt_debut > now:
                     nouvelle_file.append(res)
-                else:
-                    pass # Trop vieux, on supprime (on n'ajoute pas à nouvelle_file)
+                # Sinon : c'est passé, on ne l'ajoute pas à nouvelle_file (suppression)
             except:
-                nouvelle_file.append(res) # Garder si format bizarre
+                nouvelle_file.append(res)
 
         # Mise à jour réelle dans Supabase
         if b['statut'] != "panne":
@@ -66,7 +67,7 @@ def piloter_bornes(bornes_data):
                 "utilisateur": user_final,
                 "fin": fin_final,
                 "suivant": " | ".join(nouvelle_file)
-            }).eq("id", b['id']).execute()
+            }).eq("id", bid).execute()
 
 # --- 3. AFFICHAGE ---
 st.title("⚡ Bornes Calais - Gestion Auto")
@@ -75,19 +76,20 @@ st.write(f"🕒 Heure actuelle : **{now.strftime('%d/%m %H:%M')}**")
 # Récupération et pilotage
 try:
     res = supabase.table("bornes").select("*").order("id").execute()
-    bornes = res.data
-    piloter_bornes(bornes)
+    bornes_list = res.data
+    piloter_bornes(bornes_list)
     # Re-lecture pour affichage à jour
     res = supabase.table("bornes").select("*").order("id").execute()
-    bornes = res.data
+    bornes_list = res.data
 except Exception as e:
     st.error(f"Erreur base de données : {e}")
-    bornes = []
+    bornes_list = []
 
-for b in bornes:
+for b in bornes_list:
+    bid = str(b['id'])
     statut = str(b['statut']).lower()
     
-    # Couleurs
+    # Couleurs et messages
     if statut == "panne":
         color, msg = "#ffcccc", "❌ HORS SERVICE"
     elif statut == "occupé":
@@ -104,4 +106,14 @@ for b in bornes:
 
     # Bouton Panne
     label_p = "🔧 Marquer Réparée" if statut == "panne" else "🚩 Signaler Panne"
-    if st.button(label_p, key=f"
+    if st.button(label_p, key=f"btn_panne_{bid}", use_container_width=True):
+        nouveau = "libre" if statut == "panne" else "panne"
+        supabase.table("bornes").update({"statut": nouveau, "utilisateur": "", "fin": ""}).eq("id", bid).execute()
+        st.rerun()
+
+    # Formulaire Réservation
+    with st.expander("📅 Ajouter une réservation"):
+        with st.form(key=f"form_{bid}", clear_on_submit=True):
+            f_nom = st.text_input("Prénom")
+            c1, c2 = st.columns(2)
+            d_deb = c1.date_input("Jour début", value=now.date(), key=f
