@@ -4,44 +4,17 @@ from datetime import datetime
 import pytz, time
 
 # --- CONFIG ---
-U = "https://bbdflpdeehgbgqqqdvnu.supabase.co"
-K = "sb_publishable_APMQsSWxuWQ_r961_T8i6g_CeEe41Yz"
+U, K = "https://bbdflpdeehgbgqqqdvnu.supabase.co", "sb_publishable_APMQsSWxuWQ_r961_T8i6g_CeEe41Yz"
 
 try:
     db = create_client(U, K)
 except:
-    st.error("Erreur"); st.stop()
+    st.error("Erreur DB"); st.stop()
 
-st.set_page_config(page_title="Bornes Calais", layout="centered")
-
-# --- CSS PERSONNALISÉ ---
-st.markdown("""
-<style>
-    .stApp { background-color: #f4f7f6; }
-    .borne-card {
-        padding: 20px;
-        border-radius: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        margin-bottom: 20px;
-        border-left: 10px solid;
-    }
-    .statut-label {
-        font-weight: bold;
-        font-size: 1.2em;
-        text-transform: uppercase;
-    }
-    .user-info {
-        font-size: 1.1em;
-        color: #333;
-        margin-top: 5px;
-    }
-</style>
-""", unsafe_allow_html=True)
-
+st.set_page_config(page_title="Bornes Calais")
 tz, fmt = pytz.timezone('Europe/Paris'), "%d/%m/%Y %H:%M"
 now = datetime.now(tz)
 
-# --- AUTOMATE ---
 def auto(data):
     for b in data:
         bid, f = str(b['id']), b.get('suivant') or ""
@@ -49,7 +22,8 @@ def auto(data):
             if b['statut'] not in ["panne", "libre"] and b['utilisateur'] != "Manuel":
                 db.table("bornes").update({"statut":"libre","utilisateur":"","fin":""}).eq("id",bid).execute()
             continue
-        rl, nf, u, hf = [r.strip() for r in f.split("|") if r.strip()], [], None, ""
+        rl = [r.strip() for r in f.split("|") if r.strip()]
+        nf, u, hf = [], None, ""
         for r in rl:
             try:
                 nm = r.split(" [")[0]
@@ -65,9 +39,8 @@ def auto(data):
         if b['statut'] != "panne" and b['utilisateur'] != "Manuel":
             db.table("bornes").update({"statut":"occupé" if u else "libre","utilisateur":u or "","fin":hf,"suivant":" | ".join(nf)}).eq("id",bid).execute()
 
-# --- HEADER ---
-st.title("⚡ Bornes Calais Auto")
-st.subheader(f"🕒 {now.strftime('%H:%M')}")
+st.title("⚡ Bornes Calais")
+st.caption(f"Dernière mise à jour : {now.strftime('%H:%M:%S')}")
 
 try:
     res = db.table("bornes").select("*").order("id").execute()
@@ -76,18 +49,51 @@ try:
     d = db.table("bornes").select("*").order("id").execute().data
 except: d = []
 
-# --- AFFICHAGE ---
 for b in d:
     bid, s = str(b['id']), str(b['statut']).lower()
     
-    # Choix du style selon le statut
-    if s == "panne":
-        bg, border, txt = "#ffebee", "#f44336", "HORS SERVICE"
-    elif s == "occupé":
-        bg, border, txt = "#fff3e0", "#ff9800", f"OCCUPÉ - {b['utilisateur']}"
-    else:
-        bg, border, txt = "#e8f5e9", "#4caf50", "DISPONIBLE"
+    # --- DESIGN NATIF ---
+    with st.container():
+        st.subheader(f"📍 {b['nom']}")
+        if s == "panne":
+            st.error("❌ HORS SERVICE")
+        elif s == "occupé":
+            st.warning(f"🔴 OCCUPÉ par {b['utilisateur']} (Fin: {b['fin']})")
+        else:
+            st.success("🟢 DISPONIBLE")
 
-    st.markdown(f"""
-    <div class="borne-card" style="background-color: {bg}; border-left-color: {border};">
-        <div style
+        c1, c2 = st.columns(2)
+        if st.button("🚩 Panne/OK", key="p"+bid, use_container_width=True):
+            ns = "libre" if s == "panne" else "panne"
+            db.table("bornes").update({"statut":ns,"utilisateur":"","fin":""}).eq("id",bid).execute()
+            st.rerun()
+        
+        if s == "libre":
+            if st.button("🚗 Occuper", key="o"+bid, use_container_width=True):
+                db.table("bornes").update({"statut":"occupé","utilisateur":"Manuel","fin":"--"}).eq("id",bid).execute()
+                st.rerun()
+        else:
+            if st.button("✅ Libérer", key="l"+bid, use_container_width=True):
+                db.table("bornes").update({"statut":"libre","utilisateur":"","fin":""}).eq("id",bid).execute()
+                st.rerun()
+
+    with st.expander("📅 Réserver"):
+        with st.form(key="f"+bid, clear_on_submit=True):
+            n = st.text_input("Prénom")
+            h1 = st.selectbox("Début", [f"{h:02d}:00" for h in range(24)], index=now.hour)
+            h2 = st.selectbox("Fin", [f"{h:02d}:00" for h in range(24)], index=(now.hour+1)%24)
+            if st.form_submit_button("VALIDER"):
+                if n:
+                    tr = f"{n} [{now.strftime('%d/%m')} {h1} - {now.strftime('%d/%m')} {h2}]"
+                    old = b['suivant'] or ""
+                    maj = f"{old} | {tr}" if (old and old!="-") else tr
+                    db.table("bornes").update({"suivant":maj}).eq("id",bid).execute()
+                    st.rerun()
+
+    if b['suivant'] and b['suivant'].strip() not in ["", "-"]:
+        for i in b['suivant'].split("|"):
+            if i.strip(): st.caption(f"• {i.strip()}")
+    st.divider()
+
+time.sleep(60)
+st.rerun()
