@@ -6,103 +6,116 @@ from datetime import datetime
 import pytz
 
 # --- CONFIGURATION ---
-SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxavX9psS3Spm75cMZJ2F3W7uxiFU1y4E4IdvUcRCPLNAiWDBaoS2I2vLNXYVwgh4oz/exec"
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzM3-IddG1w-dcRWWFn26GZeLyixxQ8bu0QZ_EIqEluMf2h33VPDTXsWv5Cc-LvGMWk/exec"
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQpyeQVt9fmmpJUEft_YjO52_ivj7gvJxcTTK53R0P3ptPIuKE2-v7pF9TwTJ5PPANlmzMkQwjIinow/pub?output=csv"
 
-st.set_page_config(page_title="Bornes Calais Pro", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Bornes Calais Pro", page_icon="⚡")
 tz = pytz.timezone('Europe/Paris')
 now = datetime.now(tz)
 
-# --- LECTURE DES DONNÉES ---
+# --- LECTURE ---
 try:
-    # Anti-cache pour avoir les infos en temps réel
-    df = pd.read_csv(f"{SHEET_CSV}&v={now.timestamp()}").fillna("")
+    # On force la lecture la plus fraîche possible
+    df = pd.read_csv(f"{SHEET_CSV}&refresh={now.timestamp()}").fillna("")
     df.columns = df.columns.str.strip()
 except:
-    st.error("Impossible de lire le Sheets. Vérifie la publication Web.")
+    st.error("Connexion au Sheets impossible.")
     st.stop()
 
-st.title("⚡ Réseau de Bornes - Calais")
-st.write(f"🕒 Heure actuelle : **{now.strftime('%H:%M')}**")
+st.title("⚡ Réseau Bornes Calais")
+st.write(f"🕒 Heure : **{now.strftime('%H:%M')}**")
 
-# --- AFFICHAGE DES BORNES ---
 for index, row in df.iterrows():
-    # Extraction des infos de la ligne
-    borne = str(row['Borne'])
-    lieu = str(row['Lieu'])
-    statut = str(row['Statut']).lower()
-    user = str(row['Utilisateur'])
-    debut = str(row['Début'])
-    fin = str(row['Fin'])
-    suivant = str(row['Suivant']).strip()
+    # On stocke les données de la ligne dans des variables propres
+    b_name = str(row['Borne'])
+    b_lieu = str(row['Lieu'])
+    b_statut = str(row['Statut']).lower()
+    b_user = str(row['Utilisateur'])
+    b_deb = str(row['Début'])
+    b_fin = str(row['Fin'])
+    # On nettoie la file d'attente pour éviter les textes bizarres
+    b_suivant = str(row['Suivant']).strip()
+    if b_suivant.lower() == "nan": b_suivant = ""
 
-    # Style selon l'état
-    bg = "#d4edda" if "libre" in statut else "#f8d7da"
-    if "panne" in statut: bg = "#fff3cd"
+    # Couleur
+    color = "#d4edda" if "libre" in b_statut else "#f8d7da"
+    if "panne" in b_statut: color = "#fff3cd"
 
     st.markdown(f"""
-        <div style="padding:15px; border-radius:10px; background:{bg}; border:1px solid #ccc; margin-bottom:10px; color:black">
-            <h3 style="margin:0">🔌 {borne} — <small>{lieu}</small></h3>
-            <p style="margin:0"><b>Utilisateur :</b> {user if user else 'DISPONIBLE'}</p>
-            <p style="margin:0"><b>Horaire :</b> {debut} ⮕ {fin if fin else 'Libre'}</p>
+        <div style="padding:15px; border-radius:10px; background:{color}; border:1px solid #ccc; margin-bottom:10px; color:black">
+            <h3 style="margin:0">🔌 {b_name} ({b_lieu})</h3>
+            <p style="margin:0"><b>Actuel :</b> {b_user if b_user else 'Disponible'}</p>
+            <p style="margin:0"><b>Horaire :</b> {b_deb} ⮕ {b_fin}</p>
         </div>
     """, unsafe_allow_html=True)
 
     c1, c2 = st.columns(2)
-
     with c1:
-        # Signaler Panne / Réparée
-        btn_label = "🔧 Réparée" if "panne" in statut else "🚩 Signaler Panne"
-        if st.button(btn_label, key=f"p_{index}"):
-            new_s = "libre" if "panne" in statut else "panne"
-            payload = {"row": index+1, "borne": borne, "lieu": lieu, "statut": new_s, "utilisateur": "", "debut": "", "fin": "", "suivant": suivant}
-            requests.post(SCRIPT_URL, json=payload)
+        # État Panne / Réparée
+        label = "🔧 Réparée" if "panne" in b_statut else "🚩 Panne"
+        if st.button(label, key=f"p_{index}", use_container_width=True):
+            new_s = "libre" if "panne" in b_statut else "panne"
+            p = {"row": index+1, "borne": b_name, "lieu": b_lieu, "statut": new_s, "utilisateur": "", "debut": "", "fin": "", "suivant": b_suivant}
+            requests.post(SCRIPT_URL, json=p)
             st.rerun()
 
     with c2:
-        # Libérer la borne (Prendre le suivant s'il existe)
-        if "occupe" in statut:
-            if st.button("✅ Terminer Charge", key=f"l_{index}"):
-                items = [i.strip() for i in suivant.split("|") if i.strip()]
+        # Libérer (Prendre le suivant)
+        if "occupe" in b_statut:
+            if st.button("✅ Terminer", key=f"l_{index}", use_container_width=True):
+                items = [i.strip() for i in b_suivant.split("|") if i.strip()]
                 if items:
-                    next_res = items.pop(0)
-                    # Extraction simple du nom et des heures
-                    next_user = next_res.split(" [")[0]
-                    next_times = next_res.split("[")[1].split("]")[0].split(" ")[1].split("-")
-                    payload = {"row": index+1, "borne": borne, "lieu": lieu, "statut": "occupé", "utilisateur": next_user, "debut": next_times[0], "fin": next_times[1], "suivant": "|".join(items)}
+                    prochain = items.pop(0)
+                    # Extraction sécurisée du nom et des heures
+                    try:
+                        p_nom = prochain.split(" [")[0]
+                        p_h = prochain.split("[")[1].split("]")[0].split(" ")[1].split("-")
+                        p_d, p_f = p_h[0], p_h[1]
+                    except:
+                        p_nom = prochain; p_d = "Auto"; p_f = "En cours"
+                    
+                    p = {"row": index+1, "borne": b_name, "lieu": b_lieu, "statut": "occupé", "utilisateur": p_nom, "debut": p_d, "fin": p_f, "suivant": "|".join(items)}
                 else:
-                    payload = {"row": index+1, "borne": borne, "lieu": lieu, "statut": "libre", "utilisateur": "", "debut": "", "fin": "", "suivant": ""}
-                requests.post(SCRIPT_URL, json=payload)
+                    p = {"row": index+1, "borne": b_name, "lieu": b_lieu, "statut": "libre", "utilisateur": "", "debut": "", "fin": "", "suivant": ""}
+                requests.post(SCRIPT_URL, json=p)
                 st.rerun()
 
-    # --- FORMULAIRE RÉSERVATION ---
-    with st.expander("📅 Réserver ou Prendre cette borne"):
-        with st.form(key=f"f_{index}", clear_on_submit=True):
-            f_nom = st.text_input("Nom / Prénom")
+    # --- FORMULAIRE RÉSERVATION SÉCURISÉ ---
+    with st.expander("📅 Réserver / Prendre la place"):
+        with st.form(key=f"form_{index}", clear_on_submit=True):
+            f_nom = st.text_input("Ton Prénom")
             f_date = st.date_input("Date", value=now.date())
-            col1, col2 = st.columns(2)
-            f_h_deb = col1.text_input("Heure Début (ex: 14:00)")
-            f_h_fin = col2.text_input("Heure Fin (ex: 16:30)")
+            f_h_d = st.text_input("Heure Début (ex: 08:00)")
+            f_h_f = st.text_input("Heure Fin (ex: 10:00)")
             
-            if st.form_submit_button("Confirmer"):
-                if f_nom and f_h_deb and f_h_fin:
-                    date_str = f_date.strftime("%d/%m")
-                    nouvelle_resa = f"{f_nom} [{date_str} {f_h_deb}-{f_h_fin}]"
+            if st.form_submit_button("Valider la réservation"):
+                if f_nom and f_h_d and f_h_f:
+                    # On crée le texte de la nouvelle réservation
+                    d_str = f_date.strftime("%d/%m")
+                    nouvelle_resa = f"{f_nom} [{d_str} {f_h_d}-{f_h_f}]"
 
-                    # SI LIBRE et AUJOURD'HUI -> On prend la place
-                    if "libre" in statut and f_date == now.date():
-                        payload = {"row": index+1, "borne": borne, "lieu": lieu, "statut": "occupé", "utilisateur": f_nom, "debut": f_h_deb, "fin": f_h_fin, "suivant": suivant}
-                    # SI DÉJÀ PRIS ou FUTUR -> On ajoute à la file "Suivant"
+                    # LOGIQUE ANTI-EFFACEMENT
+                    if "libre" in b_statut and f_date == now.date():
+                        # LIBRE : On prend la place
+                        payload = {"row": index+1, "borne": b_name, "lieu": b_lieu, "statut": "occupé", "utilisateur": f_nom, "debut": f_h_d, "fin": f_h_f, "suivant": b_suivant}
                     else:
-                        file_maj = f"{suivant} | {nouvelle_resa}" if (suivant and suivant != "nan") else nouvelle_resa
-                        payload = {"row": index+1, "borne": borne, "lieu": lieu, "statut": statut, "utilisateur": user, "debut": debut, "fin": fin, "suivant": file_maj}
+                        # OCCUPÉ ou FUTUR : On AJOUTE à la liste sans écraser
+                        if b_suivant == "":
+                            file_finale = nouvelle_resa
+                        else:
+                            # On vérifie si la personne n'est pas déjà dans la file
+                            file_finale = f"{b_suivant} | {nouvelle_resa}"
+                        
+                        payload = {"row": index+1, "borne": b_name, "lieu": b_lieu, "statut": b_statut, "utilisateur": b_user, "debut": b_deb, "fin": b_fin, "suivant": file_finale}
                     
                     requests.post(SCRIPT_URL, json=payload)
-                    st.success("Planning mis à jour !")
-                    time.sleep(1.5)
+                    st.success("Réservation enregistrée !")
+                    time.sleep(1.5) # Pause pour laisser Google Sheets respirer
                     st.rerun()
 
-    # Affichage de la file d'attente
-    if suivant and suivant != "nan":
-        st.caption(f"📋 **File d'attente :** {suivant}")
+    # Affichage de la file
+    if b_suivant:
+        st.write("📋 **Planning à venir :**")
+        for i, r in enumerate(b_suivant.split("|")):
+            st.caption(f"{i+1}. {r.strip()}")
     st.divider()
