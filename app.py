@@ -38,7 +38,17 @@ for index, row in df.iterrows():
             <p style="margin:0">📍 {row['Lieu']}</p>
             <hr style="margin:10px 0">
             <p style="margin:0"><b>Utilisateur :</b> {row['Utilisateur'] if row['Utilisateur'] else 'LIBRE'}</p>
-            <p style="margin:0">⌚ <b>Créneau :</b> {row['Début']} { 'à' if row['Fin'] else ''} {row['Fin']}</p>
+            h_debut = row.get('Début', '')
+h_fin = row.get('Fin', '')
+st.markdown(f"""
+    <div style="padding:15px; border-radius:10px; background:{bg_color}; border:1px solid #ccc; margin-bottom:10px">
+        <h3 style="margin:0">🔌 {row['Borne']}</h3>
+        <p style="margin:0">📍 {row['Lieu']}</p>
+        <hr style="margin:10px 0">
+        <p style="margin:0"><b>Utilisateur :</b> {row['Utilisateur'] if row['Utilisateur'] else 'LIBRE'}</p>
+        <p style="margin:0">⌚ <b>Créneau :</b> {h_debut} {'à' if h_fin else ''} {h_fin}</p>
+    </div>
+""", unsafe_allow_html=True)
         </div>
     """, unsafe_allow_html=True)
 
