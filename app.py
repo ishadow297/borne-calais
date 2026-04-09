@@ -3,34 +3,29 @@ from supabase import create_client
 from datetime import datetime
 import pytz, time
 
-# 1. Connexion (Vérifie bien tes clés ici)
-U = "https://bbdflpdeehgbgqqqdvnu.supabase.co"
-K = "sb_publishable_APMQsSWxuWQ_r961_T8i6g_CeEe41Yz"
+# 1. Connexion
+U, K = "https://bbdflpdeehgbgqqqdvnu.supabase.co", "sb_publishable_APMQsSWxuWQ_r961_T8i6g_CeEe41Yz"
 T = "bornes"
 
 try:
     db = create_client(U, K)
 except:
-    st.error("Lien base de données mort")
-    st.stop()
+    st.error("Erreur DB"); st.stop()
 
-# 2. Configuration
-st.set_page_config(page_title="Bornes Calais")
-tz = pytz.timezone('Europe/Paris')
-fmt = "%d/%m/%Y %H:%M"
+# 2. Setup
+st.set_page_config(page_title="Bornes")
+tz, fmt = pytz.timezone('Europe/Paris'), "%d/%m/%Y %H:%M"
 now = datetime.now(tz)
 
-# 3. Fonction Automate
+# 3. Automate
 def auto(data):
     for b in data:
-        bid = str(b['id'])
-        f = b.get('suivant') or ""
+        bid, f = str(b['id']), b.get('suivant') or ""
         if not f.strip() or f.strip() == "-":
-            if b['statut'] != "panne" and b['statut'] != "libre" and b['utilisateur'] != "Manuel":
+            if b['statut'] == "occupé" and b['utilisateur'] != "Manuel":
                 db.table(T).update({"statut":"libre","utilisateur":"","fin":""}).eq("id",bid).execute()
             continue
-        rl = [r.strip() for r in f.split("|") if r.strip()]
-        nf, u, hf = [], None, ""
+        rl, nf, u, hf = [r.strip() for r in f.split("|") if r.strip()], [], None, ""
         for r in rl:
             try:
                 nm = r.split(" [")[0]
@@ -48,19 +43,27 @@ def auto(data):
 
 # 4. Interface
 st.title("⚡ Bornes Calais")
-st.write(f"Heure : {now.strftime('%d/%m %H:%M')}")
+st.write(f"MAJ: {now.strftime('%H:%M')}")
 
 try:
-    res = db.table(T).select("*").order("id").execute()
-    d = res.data
+    d = db.table(T).select("*").order("id").execute().data
     auto(d)
     d = db.table(T).select("*").order("id").execute().data
-except Exception as e:
-    st.error(f"Erreur de lecture : {e}")
-    d = []
+except: d = []
 
 for b in d:
     bid, s = str(b['id']), str(b['statut']).lower()
     
-    # Couleur de la boîte
-    c =
+    # Correction ligne 66 : On utilise des styles Streamlit directs
+    if s == "panne":
+        st.error(f"📍 {b['nom']} : HORS SERVICE")
+    elif s == "occupé":
+        st.warning(f"📍 {b['nom']} : {b['utilisateur']} (Fin: {b['fin']})")
+    else:
+        st.success(f"📍 {b['nom']} : LIBRE")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🚩 Panne/OK", key="p"+bid):
+            ns = "libre" if s == "panne" else "panne"
+            db.table
