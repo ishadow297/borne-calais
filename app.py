@@ -1,118 +1,138 @@
+Python
 import streamlit as st
 import pandas as pd
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 # --- CONFIGURATION ---
-# REMPLACE PAR TON URL /EXEC
-SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyFzgdMMbjg4SDcd5iQitC2ncBqgb0qcjIlioHavIOT4N-jbNIyaT0oydmc2JOroQGF/exec"
-# TON LIEN CSV (PUBLIÉ SUR LE WEB)
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyHCSrzomz-6fnHUZNQ_6K6HI03OrH6DLHQeJJCDyGeQaUzK6Qcuvf3XPpxy1Upfj25/exec"
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQpyeQVt9fmmpJUEft_YjO52_ivj7gvJxcTTK53R0P3ptPIuKE2-v7pF9TwTJ5PPANlmzMkQwjIinow/pub?output=csv"
 
-st.set_page_config(page_title="Bornes Calais", page_icon="⚡", layout="centered")
+st.set_page_config(page_title="Gestion Bornes Calais", page_icon="⚡", layout="wide")
 tz = pytz.timezone('Europe/Paris')
 now = datetime.now(tz)
 
-# --- FONCTION DE LECTURE (SÉCURISÉE) ---
-def get_data():
-    # Le paramètre cachebuster force Google à donner la version réelle
-    url = f"{SHEET_CSV}&cachebuster={time.time()}"
-    df = pd.read_csv(url).fillna("")
-    df.columns = df.columns.str.strip()
+# --- FONCTION DE NETTOYAGE ET PASSAGE DE RELAIS ---
+def orchestrateur_donnees(df):
+    for i, row in df.iterrows():
+        # 1. Vérifier si la session actuelle est terminée
+        if row['Statut'].lower() == "occupé" and row['Fin']:
+            try:
+                # On compare l'heure de fin avec maintenant
+                h_fin = datetime.strptime(row['Fin'], "%H:%M").time()
+                dt_fin = datetime.combine(now.date(), h_fin).replace(tzinfo=tz)
+                
+                if now > dt_fin:
+                    # C'est fini ! On regarde s'il y a un suivant
+                    file = str(row['Suivant']).strip()
+                    if file and file.lower() != "nan":
+                        items = file.split(" | ")
+                        prochain = items.pop(0)
+                        # Format: Nom [Date Heure-Heure]
+                        p_nom = prochain.split(" [")[0]
+                        p_creneau = prochain.split(" ")[2].replace("]", "").split("-")
+                        
+                        # On met à jour le DF localement (le push vers Google se fera au prochain clic)
+                        df.at[i, 'Utilisateur'] = p_nom
+                        df.at[i, 'Début'] = p_creneau[0]
+                        df.at[i, 'Fin'] = p_creneau[1]
+                        df.at[i, 'Suivant'] = " | ".join(items)
+                    else:
+                        df.at[i, 'Statut'] = "libre"
+                        df.at[i, 'Utilisateur'] = ""
+                        df.at[i, 'Début'] = ""
+                        df.at[i, 'Fin'] = ""
+            except: pass
     return df
 
-df = get_data()
+# --- CHARGEMENT ---
+try:
+    raw_df = pd.read_csv(f"{SHEET_CSV}&v={time.time()}").fillna("")
+    raw_df.columns = raw_df.columns.str.strip()
+    df = orchestrateur_donnees(raw_df)
+except:
+    st.error("Erreur de connexion aux données.")
+    st.stop()
 
-st.title("⚡ Bornes de Recharge Calais")
-st.subheader(f"🕒 {now.strftime('%H:%M')} — {now.strftime('%d/%m/%Y')}")
+# --- INTERFACE ---
+st.title("⚡ Réseau de Bornes Électriques - Calais")
+st.write(f"📅 **{now.strftime('%A %d %B')}** | 🕒 **{now.strftime('%H:%M')}**")
+
+# Génération des options d'heures (08:00, 08:30, etc.)
+heures_dispo = [f"{h:02d}:{m:02d}" for h in range(24) for m in (0, 30)]
 
 for index, row in df.iterrows():
-    # Données actuelles de la ligne
-    b_nom = str(row['Borne'])
-    b_lieu = str(row['Lieu'])
-    b_statut = str(row['Statut']).lower()
-    b_user = str(row['Utilisateur'])
-    b_deb = str(row['Début'])
-    b_fin = str(row['Fin'])
-    b_file = str(row['Suivant']).strip()
-    if b_file.lower() == "nan": b_file = ""
-
-    # Couleur
-    bg_color = "#d4edda" if "libre" in b_statut else "#f8d7da"
-    if "panne" in b_statut: bg_color = "#fff3cd"
-
-    # Affichage Carte
-    st.markdown(f"""
-        <div style="padding:15px; border-radius:10px; background:{bg_color}; border:2px solid #bbb; color:black; margin-bottom:10px">
-            <h3 style="margin:0">🔌 {b_nom}</h3>
-            <p style="margin:0">📍 {b_lieu}</p>
-            <hr style="margin:10px 0">
-            <p style="margin:0"><b>Utilisateur :</b> {b_user if b_user else 'DISPONIBLE'}</p>
-            <p style="margin:0"><b>Session :</b> {b_deb} ⮕ {b_fin}</p>
-        </div>
-    """, unsafe_allow_html=True)
-
-    c1, c2 = st.columns(2)
+    # Variables
+    borne = row['Borne']
+    statut = row['Statut'].lower()
+    file = str(row['Suivant']).strip()
     
-    with c1:
-        # BOUTON PANNE
-        btn_txt = "🔧 Réparée" if "panne" in b_statut else "🚩 Panne"
-        if st.button(btn_txt, key=f"panne_{index}", use_container_width=True):
-            new_statut = "libre" if "panne" in b_statut else "panne"
-            payload = {"row": index+1, "borne": b_nom, "lieu": b_lieu, "statut": new_statut, "utilisateur": "", "debut": "", "fin": "", "suivant": b_file}
-            requests.post(SCRIPT_URL, json=payload)
-            st.rerun()
-
-    with c2:
-        # BOUTON LIBÉRER / SUIVANT
-        if "occupe" in b_statut:
-            if st.button("✅ Terminer", key=f"lib_{index}", use_container_width=True):
-                file_items = [i.strip() for i in b_file.split("|") if i.strip()]
-                if file_items:
-                    prochain_brut = file_items.pop(0)
-                    # On nettoie le texte pour l'affichage (ex: "Julien [10/04 12:00-14:00]")
-                    p_nom = prochain_brut.split(" [")[0]
-                    p_creneau = prochain_brut.split("[")[1].replace("]", "").split(" ")[1] if "[" in prochain_brut else "En cours"
-                    p_debut, p_fin = p_creneau.split("-") if "-" in p_creneau else ("Auto", "Auto")
-                    
-                    payload = {"row": index+1, "borne": b_nom, "lieu": b_lieu, "statut": "occupé", "utilisateur": p_nom, "debut": p_debut, "fin": p_fin, "suivant": "|".join(file_items)}
-                else:
-                    payload = {"row": index+1, "borne": b_nom, "lieu": b_lieu, "statut": "libre", "utilisateur": "", "debut": "", "fin": "", "suivant": ""}
-                requests.post(SCRIPT_URL, json=payload)
-                st.rerun()
-
-    # FORMULAIRE RÉSERVATION
-    with st.expander("📅 Réserver un créneau"):
-        with st.form(key=f"res_{index}", clear_on_submit=True):
-            f_nom = st.text_input("Ton Prénom")
-            f_date = st.date_input("Date", value=now.date())
-            f_h_d = st.text_input("Heure de début (ex: 10:00)")
-            f_h_f = st.text_input("Heure de fin (ex: 12:30)")
+    # Design des colonnes
+    with st.container():
+        col_info, col_action = st.columns([2, 1])
+        
+        with col_info:
+            if "panne" in statut:
+                st.error(f"❌ **{borne}** : HORS SERVICE")
+            elif "occupé" in statut:
+                st.warning(f"⏳ **{borne}** : Occupée par **{row['Utilisateur']}** jusqu'à **{row['Fin']}**")
+            else:
+                st.success(f"✅ **{borne}** : Disponible immédiatement")
             
-            if st.form_submit_button("Confirmer la réservation"):
-                if f_nom and f_h_d and f_h_f:
-                    # Création du texte de réservation
-                    new_entry = f"{f_nom} [{f_date.strftime('%d/%m')} {f_h_d}-{f_h_f}]"
-                    
-                    # LOGIQUE SÉCURISÉE : On ne remplace JAMAIS b_file
-                    if "libre" in b_statut and f_date == now.date():
-                        # Cas direct : Libre aujourd'hui
-                        payload = {"row": index+1, "borne": b_nom, "lieu": b_lieu, "statut": "occupé", "utilisateur": f_nom, "debut": f_h_d, "fin": f_h_f, "suivant": b_file}
-                    else:
-                        # Cas file d'attente : On concatène
-                        updated_file = f"{b_file} | {new_entry}" if b_file else new_entry
-                        payload = {"row": index+1, "borne": b_nom, "lieu": b_lieu, "statut": b_statut, "utilisateur": b_user, "debut": b_deb, "fin": b_fin, "suivant": updated_file}
-                    
-                    # Envoi et attente pour éviter le ghosting Google
-                    requests.post(SCRIPT_URL, json=payload)
-                    st.success(f"Enregistré pour {f_nom}")
-                    time.sleep(1.5)
-                    st.rerun()
+            if file and file.lower() != "nan":
+                st.caption(f"📅 À venir : {file}")
 
-    if b_file:
-        st.write("📋 **Planning :**")
-        for i, r in enumerate(b_file.split("|")):
-            st.caption(f"{i+1}. {r.strip()}")
+        with col_action:
+            # Créer un menu déroulant pour les actions
+            with st.popover("⚙️ Gérer la borne"):
+                if "panne" in statut:
+                    if st.button("🔧 Marquer comme Réparée", key=f"fix_{index}"):
+                        p = {"row": index+1, "borne": borne, "lieu": row['Lieu'], "statut": "libre", "utilisateur": "", "debut": "", "fin": "", "suivant": file}
+                        requests.post(SCRIPT_URL, json=p)
+                        st.rerun()
+                else:
+                    if st.button("🚩 Signaler une Panne", key=f"hs_{index}"):
+                        p = {"row": index+1, "borne": borne, "lieu": row['Lieu'], "statut": "panne", "utilisateur": "HORS SERVICE", "debut": "", "fin": "", "suivant": file}
+                        requests.post(SCRIPT_URL, json=p)
+                        st.rerun()
+                    
+                    if "occupé" in statut:
+                        if st.button("✅ Terminer la session", key=f"end_{index}"):
+                            # Forcer le passage au suivant
+                            items = [i.strip() for i in file.split("|") if i.strip()]
+                            if items:
+                                n = items.pop(0)
+                                p_nom = n.split(" [")[0]
+                                p_c = n.split(" ")[2].replace("]", "").split("-")
+                                payload = {"row": index+1, "borne": borne, "lieu": row['Lieu'], "statut": "occupé", "utilisateur": p_nom, "debut": p_c[0], "fin": p_c[1], "suivant": "|".join(items)}
+                            else:
+                                payload = {"row": index+1, "borne": borne, "lieu": row['Lieu'], "statut": "libre", "utilisateur": "", "debut": "", "fin": "", "suivant": ""}
+                            requests.post(SCRIPT_URL, json=payload)
+                            st.rerun()
+
+        # --- FORMULAIRE RÉSERVATION PRO ---
+        with st.expander("📝 Réserver un créneau"):
+            with st.form(key=f"form_{index}"):
+                nom = st.text_input("Votre Prénom")
+                date_res = st.date_input("Date", value=now.date(), min_value=now.date())
+                c_h1, c_h2 = st.columns(2)
+                h_start = c_h1.selectbox("Début", heures_dispo, index=20) # Défaut 10:00
+                h_end = c_h2.selectbox("Fin", heures_dispo, index=24)   # Défaut 12:00
+                
+                if st.form_submit_button("Confirmer la réservation"):
+                    if nom:
+                        new_res = f"{nom} [{date_res.strftime('%d/%m')} {h_start}-{h_end}]"
+                        
+                        if statut == "libre" and date_res == now.date():
+                            payload = {"row": index+1, "borne": borne, "lieu": row['Lieu'], "statut": "occupé", "utilisateur": nom, "debut": h_start, "fin": h_end, "suivant": file}
+                        else:
+                            f_maj = f"{file} | {new_res}" if (file and file != "nan") else new_res
+                            payload = {"row": index+1, "borne": borne, "lieu": row['Lieu'], "statut": statut, "utilisateur": row['Utilisateur'], "debut": row['Début'], "fin": row['Fin'], "suivant": f_maj}
+                        
+                        requests.post(SCRIPT_URL, json=payload)
+                        st.balloons()
+                        time.sleep(1.5)
+                        st.rerun()
     st.divider()
