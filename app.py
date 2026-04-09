@@ -2,104 +2,91 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 
 # --- CONFIGURATION ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycby0LYnrfJWcZqsKjDbTHNzlEhwkiM01eqRCcs-WJDWjXu-V0OhPE7Fv8RIm8hdHIamF/exec"
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQpyeQVt9fmmpJUEft_YjO52_ivj7gvJxcTTK53R0P3ptPIuKE2-v7pF9TwTJ5PPANlmzMkQwjIinow/pub?output=csv"
 
-st.set_page_config(page_title="Bornes Calais Pro", page_icon="⚡")
-
-# --- GESTION DU TEMPS ---
+st.set_page_config(page_title="Bornes Calais", page_icon="⚡")
 tz = pytz.timezone('Europe/Paris')
 now = datetime.now(tz)
 
-# --- LECTURE ET NETTOYAGE AUTOMATIQUE ---
+# --- LECTURE SANS CACHE (OPTIMISÉE) ---
 try:
-    url_refresh = f"{SHEET_CSV}&v={now.timestamp()}"
-    df = pd.read_csv(url_refresh).fillna("")
+    # On utilise un timestamp unique pour forcer Google à rafraîchir
+    df = pd.read_csv(f"{SHEET_CSV}&refresh={now.timestamp()}").fillna("")
     df.columns = df.columns.str.strip()
-    
-    # Logique de nettoyage : Si l'heure de fin est passée, on libère la borne
-    # (Note: Cette partie nécessite que l'utilisateur clique sur "Libérer" pour être précis, 
-    # mais on peut forcer le statut libre si on détecte un retard important)
-except Exception as e:
-    st.error("Erreur de lecture.")
+except:
+    st.error("Connexion perdue avec le tableur.")
     st.stop()
 
-st.title("⚡ Planning Long Terme")
-st.info(f"📅 Nous sommes le **{now.strftime('%d/%m/%Y')}** | 🕒 **{now.strftime('%H:%M')}**")
+st.title("⚡ Planning Bornes Calais")
+st.write(f"🕒 Heure du site : **{now.strftime('%H:%M')}**")
 
 for index, row in df.iterrows():
-    statut = str(row.get('Statut', 'Libre')).lower()
-    file_attente = str(row.get('Suivant', ''))
+    statut = str(row['Statut']).lower()
+    file_attente = str(row['Suivant'])
     
-    # Couleur selon l'état
-    bg = "#d4edda" if "libre" in statut else "#f8d7da"
-    if "panne" in statut: bg = "#fff3cd"
+    # Design de la carte
+    color = "#d4edda" if "libre" in statut else "#f8d7da"
+    if "panne" in statut: color = "#fff3cd"
 
     st.markdown(f"""
-        <div style="padding:15px; border-radius:10px; background:{bg}; border:1px solid #ccc; margin-bottom:10px; color:black">
+        <div style="padding:15px; border-radius:10px; background:{color}; border:1px solid #ccc; margin-bottom:10px; color:black">
             <h3 style="margin:0">🔌 {row['Borne']}</h3>
-            <p style="margin:0"><b>Actuel :</b> {row['Utilisateur'] if row['Utilisateur'] else 'Libre'}</p>
-            <p style="margin:0"><b>Fin :</b> {row['Fin'] if row['Fin'] else '--:--'}</p>
+            <p style="margin:0"><b>Utilisateur :</b> {row['Utilisateur'] or 'LIBRE'}</p>
+            <p style="margin:0"><b>Début :</b> {row['Début'] or '--:--'} | <b>Fin prévue :</b> {row['Fin'] or '--:--'}</p>
         </div>
     """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-    with col1:
-        if "panne" in statut:
-            if st.button(f"🔧 Réparée", key=f"fix_{index}"):
-                payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "libre", "utilisateur": "", "debut": "", "fin": "", "suivant": file_attente}
-                requests.post(SCRIPT_URL, json=payload)
-                st.rerun()
-        else:
-            if st.button(f"🚩 Panne", key=f"p_{index}"):
-                payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "panne", "utilisateur": "HS", "debut": "", "fin": "", "suivant": file_attente}
-                requests.post(SCRIPT_URL, json=payload)
-                st.rerun()
+    with c1:
+        # Bouton Panne / Réparée
+        label = "🔧 Réparée" if "panne" in statut else "🚩 Panne"
+        new_statut = "libre" if "panne" in statut else "panne"
+        if st.button(label, key=f"btn_p_{index}", use_container_width=True):
+            payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": new_statut, "utilisateur": "", "debut": "", "fin": "", "suivant": file_attente}
+            requests.post(SCRIPT_URL, json=payload)
+            with st.spinner("Mise à jour Google..."): time.sleep(2)
+            st.rerun()
 
-    with col2:
+    with c2:
+        # Bouton Libérer / Suivant
         if "occupe" in statut:
-            if st.button(f"✅ Terminer / Suivant", key=f"lib_{index}"):
+            if st.button("✅ Terminer", key=f"btn_l_{index}", use_container_width=True):
                 suivants = [s.strip() for s in file_attente.split("|") if s.strip()]
                 if suivants:
-                    prochain = suivants.pop(0) # On récupère le premier de la liste
-                    # Format attendu : "Nom (Date HeureFin)"
-                    payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "occupé", "utilisateur": prochain, "debut": "Pris", "fin": "Voir file", "suivant": "|".join(suivants)}
+                    p = suivants.pop(0)
+                    payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "occupé", "utilisateur": p, "debut": "Auto", "fin": "Suivant", "suivant": "|".join(suivants)}
                 else:
                     payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "libre", "utilisateur": "", "debut": "", "fin": "", "suivant": ""}
                 requests.post(SCRIPT_URL, json=payload)
+                with st.spinner("Chargement..."): time.sleep(2)
                 st.rerun()
 
-    # --- FORMULAIRE LONG TERME ---
-    with st.expander("📅 Réserver (Aujourd'hui ou Futur)"):
-        with st.form(key=f"form_{index}"):
-            res_nom = st.text_input("Nom / Prénom")
-            res_date = st.date_input("Date", value=now.date())
-            res_heure = st.text_input("Heure de fin (ex: 17:30)")
-            submit = st.form_submit_button("Ajouter à la suite")
-            
-            if submit and res_nom and res_heure:
-                info_res = f"{res_nom} [{res_date.strftime('%d/%m')} à {res_heure}]"
-                
-                # SI LIBRE : On prend la place tout de suite
-                if "libre" in statut:
-                    new_payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "occupé", "utilisateur": res_nom, "debut": "Maintenant", "fin": f"{res_date.strftime('%d/%m')} {res_heure}", "suivant": file_attente}
-                # SI OCCUPÉ : On ajoute à la file sans écraser
-                else:
-                    nouvelle_file = f"{file_attente} | {info_res}" if file_attente else info_res
-                    new_payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": row['Statut'], "utilisateur": row['Utilisateur'], "debut": row['Début'], "fin": row['Fin'], "suivant": nouvelle_file}
-                
-                requests.post(SCRIPT_URL, json=new_payload)
-                st.success("Ajouté au planning !")
-                time.sleep(1)
-                st.rerun()
+    # --- FORMULAIRE DE RÉSERVATION ---
+    with st.expander("📅 Réserver (Ajouter au planning)"):
+        with st.form(key=f"f_{index}", clear_on_submit=True):
+            nom = st.text_input("Prénom")
+            h_debut = st.text_input("Début (ex: 11:30)")
+            h_fin = st.text_input("Fin (ex: 13:00)")
+            if st.form_submit_button("Valider la réservation"):
+                if nom and h_debut and h_fin:
+                    info = f"{nom} ({h_debut}-{h_fin})"
+                    if "libre" in statut:
+                        p = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "occupé", "utilisateur": nom, "debut": h_debut, "fin": h_fin, "suivant": file_attente}
+                    else:
+                        nouvelle_file = f"{file_attente} | {info}" if file_attente else info
+                        p = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": row['Statut'], "utilisateur": row['Utilisateur'], "debut": row['Début'], "fin": row['Fin'], "suivant": nouvelle_file}
+                    
+                    requests.post(SCRIPT_URL, json=p)
+                    st.success("Enregistré !")
+                    time.sleep(2)
+                    st.rerun()
 
     if file_attente:
-        st.write("📋 **Planning à venir :**")
-        for i, resa in enumerate(file_attente.split("|")):
-            st.caption(f"{i+1}. {resa}")
+        st.caption(f"📋 File d'attente : {file_attente}")
     st.divider()
