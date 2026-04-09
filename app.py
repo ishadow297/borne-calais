@@ -6,7 +6,7 @@ import pytz
 
 # --- CONFIGURATION ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyv62yWQatjNv1mGN64afctC8IU7p94r6aNhzCTnTlKlvqQ-o2ob_5c3zwLEiaBX9TI/exec"
-SHEET_CSV = "https://docs.google.com/spreadsheets/d/1jnx8Jy_abkZuMdoEkJPn8fjL6QmlbRknder9PkAj14k/edit?usp=sharing"
+SHEET_CSV = "https://docs.google.com/spreadsheets/d/1jnx8Jy_abkZuMdoEkJPn8fjL6QmlbRknder9PkAj14k/export?format=csv&gid=0"
 
 st.set_page_config(page_title="Bornes Calais Pro", page_icon="⚡", layout="centered")
 
