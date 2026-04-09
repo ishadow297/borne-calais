@@ -2,109 +2,112 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime
-import pytz # Import indispensable pour l'heure française
+import pytz
 
 # --- CONFIGURATION ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwfr__TekrEpJGmVEu1SvGqRVIppFOQDQJ_MUp7_lwxSRDZ5NAFVlnoThtybQ7IuZlM/exec"
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/1GbbDFFZxvGyy6umuoM4v3LuaOHItAdcydeWNxsz5blo/export?format=csv"
 
-st.set_page_config(page_title="Planning Bornes Calais", page_icon="⚡")
-st.title("⚡ Planning Intelligent Calais")
+st.set_page_config(page_title="Bornes Calais Pro", page_icon="⚡", layout="centered")
 
-# --- RÉGLAGE DE L'HEURE (FRANCE - EUROPE/PARIS) ---
-tz_france = pytz.timezone('Europe/Paris')
-now = datetime.now(tz_france)
+# --- STYLE CSS POUR LES COULEURS ---
+st.markdown("""
+    <style>
+    .status-card { padding: 20px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #ddd; }
+    .libre { background-color: #d4edda; border-left: 10px solid #28a745; }
+    .occupe { background-color: #f8d7da; border-left: 10px solid #dc3545; }
+    .panne { background-color: #fff3cd; border-left: 10px solid #ffc107; }
+    </style>
+    """, unsafe_allow_html=True)
 
-date_aujourdhui = now.strftime("%d/%m")
-date_demain = (now + pd.Timedelta(days=1)).strftime("%d/%m")
-heure_actuelle = now.strftime("%H:%M")
+# --- TEMPS ---
+tz = pytz.timezone('Europe/Paris')
+now = datetime.now(tz)
+date_j = now.strftime("%d/%m")
+heure_j = now.strftime("%H:%M")
 
-# Lecture du fichier
 df = pd.read_csv(f"{SHEET_CSV}&cache={now.second}").fillna("")
 
-# Affichage de la date confirmée
-st.header(f"📅 Aujourd'hui : {date_aujourdhui} | 🕒 {heure_actuelle}")
+st.title("⚡ Bornes de Recharge Calais")
+st.info(f"📅 Nous sommes le **{date_j}** | 🕒 Il est **{heure_j}**")
 
-# --- LOGIQUE DE NETTOYAGE AUTO ---
+# --- AFFICHAGE DES BORNES ---
 for index, row in df.iterrows():
     statut = str(row['Statut']).lower()
-    borne_doit_etre_liberee = False
+    
+    # Détermination de la classe CSS et de l'icône
+    css_class = "libre"
+    icon = "✅"
+    if statut == "occupé":
+        css_class = "occupe"
+        icon = "🚗"
+    elif statut == "panne":
+        css_class = "panne"
+        icon = "⚠️"
+
+    # Calcul de la barre de progression (si occupé)
+    progress = 0
+    if statut == "occupé" and " | " in str(row['Heure de fin']):
+        try:
+            times = str(row['Heure de fin']).split(" | ")[1].split(" >> ")
+            start_t = datetime.strptime(times[0], "%H:%M")
+            end_t = datetime.strptime(times[1], "%H:%M")
+            now_t = datetime.strptime(heure_j, "%H:%M")
+            total = (end_t - start_t).total_seconds()
+            ecoule = (now_t - start_t).total_seconds()
+            progress = min(max(ecoule / total, 0.0), 1.0) if total > 0 else 0
+        except: pass
+
+    # Affichage de la "Carte"
+    st.markdown(f"""<div class="status-card {css_class}">
+        <h3>{icon} {row['Borne']}</h3>
+        <p><b>Statut :</b> {statut.capitalize()}</p>
+    </div>""", unsafe_allow_html=True)
 
     if statut == "occupé":
-        try:
-            date_info = str(row['Heure de fin'])
-            if " | " in date_info:
-                jour_f, heures_f = date_info.split(" | ")
-                _, h_fin = heures_f.split(" >> ")
-                
-                # Comparaison : si le jour est arrivé/passé ET l'heure est passée
-                # Note: On transforme les dates en format comparable si besoin
-                if jour_f == date_aujourdhui and heure_actuelle > h_fin:
-                    borne_doit_etre_liberee = True
-                elif jour_f < date_aujourdhui: # Si c'est un vieux reste d'hier
-                    borne_doit_etre_liberee = True
-        except:
-            pass
-
-    if borne_doit_etre_liberee:
-        file = str(row['Suivant'])
-        nouveau_statut, nouvel_user, nouvelle_heure, nouvelle_file = "libre", "", "", ""
-
-        if file:
-            resas = file.split(" | ")
-            prochaine = resas[0].replace("• ", "")
-            if "(" in prochaine:
-                nouvel_user = prochaine.split(" (")[0]
-                nouvelle_heure = prochaine.split("(")[1].replace(")", "")
-                nouveau_statut = "Occupé"
-                nouvelle_file = " | ".join(resas[1:])
-        
-        payload = {
-            "row": index+1, "borne": row['Borne'], "statut": nouveau_statut,
-            "utilisateur": nouvel_user, "heure": nouvelle_heure, "suivant": nouvelle_file
-        }
-        requests.post(SCRIPT_URL, json=payload)
-        st.rerun()
-
-    # --- AFFICHAGE ---
-    with st.container(border=True):
-        st.subheader(f"📍 {row['Borne']}")
-        if statut == "occupé":
-            st.write(f"🔴 **{row['Utilisateur']}** : {row['Heure de fin']}")
-        else:
-            st.write("✅ **Libre**")
-        
-        if row['Suivant']:
-            st.info(f"⏳ **À venir :**\n\n{row['Suivant']}".replace(" | ", "\n\n"))
-
-# --- FORMULAIRE DE RÉSERVATION ---
-st.divider()
-st.header("📅 Réserver un créneau")
-
-with st.form("form_resa"):
-    choix_borne = st.selectbox("Borne", df['Borne'].unique())
-    choix_jour = st.radio("Jour", [f"Aujourd'hui ({date_aujourdhui})", f"Demain ({date_demain})"])
-    nom = st.text_input("Ton prénom")
+        st.write(f"👤 **{row['Utilisateur']}** jusqu'à **{row['Heure de fin'].split(' >> ')[1]}**")
+        st.progress(progress)
     
-    heures_list = [f"{h:02d}:{m:02d}" for h in range(0, 24) for m in (0, 30)]
+    if row['Suivant']:
+        with st.expander("📅 Voir la file d'attente"):
+            st.write(row['Suivant'].replace(" | ", "\n\n"))
+
+    # Boutons d'action rapides
     c1, c2 = st.columns(2)
-    h_start = c1.selectbox("Début", heures_list, index=16)
-    h_end = c2.selectbox("Fin", heures_list, index=20)
+    with c1:
+        if statut != "panne" and st.button(f"🚩 Signaler Panne ({row['Borne']})", key=f"p_{index}"):
+            requests.post(SCRIPT_URL, json={"row": index+1, "borne": row['Borne'], "statut": "panne", "utilisateur": "S.O.S", "heure": "", "suivant": row['Suivant']})
+            st.rerun()
+    with c2:
+        if statut != "libre" and st.button(f"🔄 Libérer ({row['Borne']})", key=f"l_{index}"):
+            requests.post(SCRIPT_URL, json={"row": index+1, "borne": row['Borne'], "statut": "libre", "utilisateur": "", "heure": "", "suivant": row['Suivant']})
+            st.rerun()
+
+# --- FORMULAIRE ---
+st.divider()
+st.subheader("📅 Nouvelle Réservation")
+with st.form("resa"):
+    b = st.selectbox("Borne", df['Borne'].unique())
+    j = st.radio("Jour", [f"Aujourd'hui ({date_j})", f"Demain"])
+    n = st.text_input("Prénom")
+    h_list = [f"{h:02d}:{m:02d}" for h in range(7, 22) for m in (0, 30)]
+    c3, c4 = st.columns(2)
+    h_s = c3.selectbox("Début", h_list, index=4)
+    h_e = c4.selectbox("Fin", h_list, index=8)
     
-    if st.form_submit_button("VALIDER LA RÉSERVATION"):
-        if nom and h_start < h_end:
-            idx = df[df['Borne'] == choix_borne].index[0]
-            jour_f = choix_jour.split(" (")[1].replace(")", "")
-            nouveau_creneau = f"{jour_f} | {h_start} >> {h_end}"
+    if st.form_submit_button("VALIDER"):
+        if n and h_s < h_e:
+            idx = df[df['Borne'] == b].index[0]
+            jour_txt = date_j if "Aujourd'hui" in j else (now + pd.Timedelta(days=1)).strftime("%d/%m")
+            txt_final = f"{jour_txt} | {h_s} >> {h_e}"
             
-            file_actuelle = str(df.iloc[idx]['Suivant'])
+            # Si libre, on occupe, sinon on ajoute à 'Suivant'
             if str(df.iloc[idx]['Statut']).lower() == "libre":
-                 payload = {"row": idx + 1, "borne": choix_borne, "statut": "Occupé", "utilisateur": nom, "heure": nouveau_creneau, "suivant": file_actuelle}
+                payload = {"row": idx+1, "borne": b, "statut": "Occupé", "utilisateur": n, "heure": txt_final, "suivant": df.iloc[idx]['Suivant']}
             else:
-                info_resa = f"• {nom} ({nouveau_creneau})"
-                nouvelle_file = f"{file_actuelle} | {info_resa}".strip(" | ")
-                payload = {"row": idx + 1, "borne": choix_borne, "statut": df.iloc[idx]['Statut'], "utilisateur": df.iloc[idx]['Utilisateur'], "heure": df.iloc[idx]['Heure de fin'], "suivant": nouvelle_file}
+                new_f = f"{df.iloc[idx]['Suivant']} | • {n} ({txt_final})".strip(" | ")
+                payload = {"row": idx+1, "borne": b, "statut": df.iloc[idx]['Statut'], "utilisateur": df.iloc[idx]['Utilisateur'], "heure": df.iloc[idx]['Heure de fin'], "suivant": new_f}
             
             requests.post(SCRIPT_URL, json=payload)
-            st.success("Réservation ajoutée !")
+            st.success("C'est enregistré !")
             st.rerun()
