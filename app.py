@@ -4,89 +4,91 @@ import requests
 from datetime import datetime
 import pytz
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION (À REMPLIR) ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycby0LYnrfJWcZqsKjDbTHNzlEhwkiM01eqRCcs-WJDWjXu-V0OhPE7Fv8RIm8hdHIamF/exec"
 SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQpyeQVt9fmmpJUEft_YjO52_ivj7gvJxcTTK53R0P3ptPIuKE2-v7pF9TwTJ5PPANlmzMkQwjIinow/pub?output=csv"
 
-st.set_page_config(page_title="Bornes Calais Pro", page_icon="⚡", layout="centered")
+st.set_page_config(page_title="Bornes Calais", page_icon="⚡")
 
-# --- STYLE CSS ---
-st.markdown("""
-    <style>
-    .status-card { padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #ddd; }
-    .libre { background-color: #d4edda; border-left: 10px solid #28a745; }
-    .occupe { background-color: #f8d7da; border-left: 10px solid #dc3545; }
-    .panne { background-color: #fff3cd; border-left: 10px solid #ffc107; }
-    .lieu-text { color: #666; font-size: 0.9em; font-style: italic; margin-bottom: 5px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- TEMPS ---
+# --- GESTION DU TEMPS ---
 tz = pytz.timezone('Europe/Paris')
 now = datetime.now(tz)
-date_j = now.strftime("%d/%m")
-heure_j = now.strftime("%H:%M")
 
-# Lecture robuste
+# --- LECTURE ---
 try:
-    df = pd.read_csv(f"{SHEET_CSV}&cache={now.second}")
+    # On ajoute un paramètre aléatoire pour éviter que Google garde en cache les vieilles données
+    df = pd.read_csv(f"{SHEET_CSV}&nocache={now.microsecond}").fillna("")
     df.columns = df.columns.str.strip()
-    df = df.fillna("")
 except:
-    st.error("Impossible de lire le tableau. Vérifie le partage 'Public'.")
+    st.error("Erreur de connexion au tableur. Vérifie le partage public.")
     st.stop()
 
-st.title("⚡ Bornes de Recharge")
-st.info(f"🕒 Il est **{heure_j}** | Chaque prise est indépendante.")
+st.title("⚡ Réservation Bornes de Recharge")
 
-# --- AFFICHAGE DES BORNES ---
 for index, row in df.iterrows():
     statut = str(row['Statut']).lower()
-    
-    # Choix de la couleur
-    css_class = "libre"
-    icon = "✅"
-    if "occupe" in statut:
-        css_class = "occupe"
-        icon = "🚗"
-    elif "panne" in statut:
-        css_class = "panne"
-        icon = "⚠️"
+    color = "#28a745" if "libre" in statut else "#dc3545"
+    if "panne" in statut: color = "#ffc107"
 
-    # Affichage de la carte
+    # Affichage du badge
     st.markdown(f"""
-        <div class="status-card {css_class}">
-            <h4 style='margin:0;'>{icon} {row['Borne']}</h4>
-            <p class="lieu-text">📍 {row['Lieu']}</p>
-            <p style='margin:0;'><b>État :</b> {statut.upper()}</p>
+        <div style="padding:15px; border-radius:10px; border-left: 10px solid {color}; background:#f9f9f9; margin-bottom:10px">
+            <h3 style="margin:0">{row['Borne']} <small>({row['Lieu']})</small></h3>
+            <p style="margin:0"><b>Statut :</b> {statut.upper()} | <b>Actuel :</b> {row['Utilisateur'] or 'Personne'}</p>
+            <p style="margin:0; font-size:0.8em">Fin prévue : {row['Heure de fin'] or '--:--'}</p>
         </div>
     """, unsafe_allow_html=True)
 
-    # Boutons d'action
-    c1, c2 = st.columns(2)
-    
-    with c1:
+    col1, col2, col3 = st.columns(3)
+
+    # --- BOUTON PANNE / RÉPARER ---
+    with col1:
         if "panne" in statut:
-            # BOUTON RÉPARER : Apparaît seulement si en panne
-            if st.button(f"🔧 Borne Réparée", key=f"fix_{index}"):
+            if st.button(f"🔧 Réparée", key=f"fix_{index}"):
                 payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "libre", "utilisateur": "", "heure": "", "suivant": row['Suivant']}
                 requests.post(SCRIPT_URL, json=payload)
                 st.rerun()
         else:
-            if st.button(f"🚩 Signaler Panne", key=f"p_{index}"):
-                payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "panne", "utilisateur": "S.O.S", "heure": "", "suivant": row['Suivant']}
+            if st.button(f"🚩 Panne", key=f"p_{index}"):
+                payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "panne", "utilisateur": "HORS SERVICE", "heure": "", "suivant": row['Suivant']}
                 requests.post(SCRIPT_URL, json=payload)
                 st.rerun()
 
-    with c2:
+    # --- BOUTON LIBÉRER ---
+    with col2:
         if "occupe" in statut:
-            if st.button(f"🔄 Libérer Prise", key=f"l_{index}"):
-                payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "libre", "utilisateur": "", "heure": "", "suivant": row['Suivant']}
+            if st.button(f"✅ Libérer", key=f"lib_{index}"):
+                # Si on libère, on regarde s'il y a quelqu'un après dans la colonne 'Suivant'
+                suivants = str(row['Suivant']).split(" | ") if row['Suivant'] else []
+                if suivants and suivants[0] != "":
+                    prochain = suivants.pop(0) # On prend le premier de la liste
+                    new_suivant = " | ".join(suivants)
+                    payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "occupé", "utilisateur": prochain, "heure": "En cours", "suivant": new_suivant}
+                else:
+                    payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "libre", "utilisateur": "", "heure": "", "suivant": ""}
                 requests.post(SCRIPT_URL, json=payload)
                 st.rerun()
 
-    if row['Suivant']:
-        with st.expander("📅 Voir la file d'attente"):
-            st.write(row['Suivant'].replace(" | ", "\n\n"))
+    # --- FORMULAIRE DE RÉSERVATION ---
+    with col3:
+        with st.popover("📅 Réserver"):
+            nom = st.text_input("Ton Nom", key=f"nom_{index}")
+            h_fin = st.text_input("Heure de fin (ex: 14:30)", key=f"h_{index}")
+            if st.button("Confirmer", key=f"conf_{index}"):
+                if nom:
+                    if "libre" in statut:
+                        # Si libre, on occupe immédiatement
+                        payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": "occupé", "utilisateur": nom, "heure": h_fin, "suivant": row['Suivant']}
+                    else:
+                        # Si déjà occupé, on ajoute à la file d'attente dans 'Suivant'
+                        actuel_suivant = str(row['Suivant'])
+                        file = f"{actuel_suivant} | {nom} ({h_fin})" if actuel_suivant else f"{nom} ({h_fin})"
+                        payload = {"row": index+1, "borne": row['Borne'], "lieu": row['Lieu'], "statut": row['Statut'], "utilisateur": row['Utilisateur'], "heure": row['Heure de fin'], "suivant": file}
+                    
+                    requests.post(SCRIPT_URL, json=payload)
+                    st.success("Réservé !")
+                    st.rerun()
 
-# --- RÉSERVATION (Suite du code identique...) ---
+    # Affichage de la file d'attente
+    if row['Suivant']:
+        st.caption(f"⏳ File d'attente : {row['Suivant']}")
