@@ -1,6 +1,6 @@
 import streamlit as st
 from supabase import create_client
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 # --- CONNEXION ---
@@ -11,115 +11,109 @@ supabase = create_client(URL, KEY)
 st.set_page_config(page_title="Bornes Calais Pro", layout="centered")
 tz = pytz.timezone('Europe/Paris')
 now = datetime.now(tz)
-heure_actuelle_str = now.strftime("%H:%M")
 
-# --- FONCTION DE NETTOYAGE AUTOMATIQUE ---
-def nettoyer_reservations_passees(bornes):
+# --- FONCTION DE NETTOYAGE AUTOMATIQUE (MULTI-JOURS) ---
+def nettoyer_planning(bornes):
     for b in bornes:
         file = b.get('suivant') or ""
         if not file or file == "-": continue
         
         reservations = [r.strip() for r in file.split("|") if r.strip()]
         nouvelle_file = []
-        modifie = False
+        a_ete_modifie = False
         
         for res in reservations:
             try:
-                # On cherche l'heure de fin dans le format "Nom (14:00-15:00)"
-                # On extrait ce qui est entre le '-' et la parenthèse fermante
-                heure_fin_str = res.split("-")[1].replace(")", "").strip()
+                # Format attendu : "Nom [JJ/MM HH:MM - JJ/MM HH:MM]"
+                # On extrait la partie date de fin (après le '-')
+                partie_fin = res.split("-")[1].replace("]", "").strip() # Ex: "10/04 15:30"
+                date_fin = datetime.strptime(f"{partie_fin}/{now.year}", "%d/%m %H:%M/%Y").replace(tzinfo=tz)
                 
-                # Comparaison des heures
-                if heure_fin_str > heure_actuelle_str:
+                # Si la date/heure de fin est encore dans le futur, on garde
+                if date_fin > now:
                     nouvelle_file.append(res)
                 else:
-                    modifie = True # Cette réservation est passée, on ne l'ajoute pas
+                    a_ete_modifie = True # Trop vieux, on supprime
             except:
-                nouvelle_file.append(res) # En cas d'erreur de format, on garde par sécurité
+                nouvelle_file.append(res) # Garder si format inconnu
         
-        if modifie:
-            # On met à jour la file d'attente dans Supabase
-            maj_file = " | ".join(nouvelle_file) if nouvelle_file else ""
-            supabase.table("bornes").update({"suivant": maj_file}).eq("id", b['id']).execute()
+        if a_ete_modifie:
+            maj = " | ".join(nouvelle_file) if nouvelle_file else ""
+            supabase.table("bornes").update({"suivant": maj}).eq("id", b['id']).execute()
 
 # --- CHARGEMENT ---
 res = supabase.table("bornes").select("*").order("id").execute()
 bornes = res.data
+nettoyer_planning(bornes)
 
-# Lancer le nettoyage automatique dès l'ouverture
-nettoyer_reservations_passees(bornes)
-
-st.title("⚡ Bornes Calais - Réservations")
-st.info(f"🕒 Heure actuelle : **{heure_actuelle_str}** (Les créneaux passés sont auto-supprimés)")
+st.title("⚡ Bornes Calais - Planning")
+st.info(f"📅 Nous sommes le : **{now.strftime('%d/%m à %H:%M')}**")
 
 for b in bornes:
     statut = str(b['statut']).lower()
-    
-    # Design selon statut
     color = "#d4edda" if statut == "libre" else "#f8d7da"
     if statut == "panne": color = "#ffcccc"
     
     st.markdown(f"""
-        <div style="padding:15px; border-radius:10px; background-color:{color}; border:2px solid #999; color:black">
+        <div style="padding:15px; border-radius:10px; background-color:{color}; border:2px solid #666; color:black">
             <h3>📍 {b['nom']}</h3>
-            <p><b>Statut :</b> {statut.upper()}</p>
-            <p><b>Utilisateur actuel :</b> {b['utilisateur'] or 'Personne'}</p>
+            <p><b>Statut actuel :</b> {statut.upper()}</p>
+            <p><b>Utilisateur :</b> {b['utilisateur'] or 'Libre'}</p>
         </div>
     """, unsafe_allow_html=True)
 
-    # 1. ACTION : RESERVER UN CRÉNEAU
-    with st.expander("📅 Réserver un créneau futur"):
+    # --- FORMULAIRE DE RÉSERVATION MULTI-JOURS ---
+    with st.expander("📅 Réserver un créneau (Plusieurs jours possibles)"):
         with st.form(key=f"res_{b['id']}", clear_on_submit=True):
             nom = st.text_input("Votre nom")
-            col1, col2 = st.columns(2)
-            h_debut = col1.selectbox("Début", [f"{h:02d}:00" for h in range(24)] + [f"{h:02d}:30" for h in range(24)], index=16)
-            h_fin = col2.selectbox("Fin", [f"{h:02d}:00" for h in range(24)] + [f"{h:02d}:30" for h in range(24)], index=18)
             
-            if st.form_submit_button("Ajouter au planning"):
-                if nom and h_debut < h_fin:
-                    nouveau_creneau = f"{nom} ({h_debut}-{h_fin})"
-                    file_actuelle = b['suivant'] or ""
+            c1, c2 = st.columns(2)
+            d_debut = c1.date_input("Date début", value=now.date())
+            h_debut = c1.selectbox("Heure début", [f"{h:02d}:00" for h in range(24)], key=f"hd_{b['id']}")
+            
+            d_fin = c2.date_input("Date fin", value=now.date() + timedelta(days=1))
+            h_fin = c2.selectbox("Heure fin", [f"{h:02d}:00" for h in range(24)], key=f"hf_{b['id']}")
+            
+            if st.form_submit_button("Enregistrer la réservation"):
+                if nom:
+                    # Construction du texte de réservation
+                    txt_debut = f"{d_debut.strftime('%d/%m')} {h_debut}"
+                    txt_fin = f"{d_fin.strftime('%d/%m')} {h_fin}"
+                    nouveau_creneau = f"{nom} [{txt_debut} - {txt_fin}]"
                     
-                    # On ajoute à la file d'attente
-                    if not file_actuelle or file_actuelle == "-":
-                        maj = nouveau_creneau
-                    else:
-                        maj = f"{file_actuelle} | {nouveau_creneau}"
+                    file_actuelle = b['suivant'] or ""
+                    maj = f"{file_actuelle} | {nouveau_creneau}" if (file_actuelle and file_actuelle != "-") else nouveau_creneau
                     
                     supabase.table("bornes").update({"suivant": maj}).eq("id", b['id']).execute()
-                    st.success(f"Réservé pour {nom}")
+                    st.success("Réservation enregistrée !")
                     st.rerun()
-                else:
-                    st.error("L'heure de fin doit être après l'heure de début.")
 
-    # 2. ACTION : BRANCHER MAINTENANT
-    if statut == "libre":
-        if st.button(f"🔌 Se brancher sur {b['nom']}", key=f"now_{b['id']}"):
-            supabase.table("bornes").update({
-                "statut": "occupé", 
-                "utilisateur": "Branchement direct",
-                "heure_branchement": heure_actuelle_str
-            }).eq("id", b['id']).execute()
-            st.rerun()
-
-    # 3. ACTION : LIBERER / PANNE
+    # --- ACTIONS RESTANTES ---
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("🚩 Panne", key=f"hs_{b['id']}"):
-            supabase.table("bornes").update({"statut": "panne"}).eq("id", b['id']).execute()
+        # Bouton Panne (Visible pour tous pour signaler un souci)
+        label_panne = "🔧 Signaler Réparée" if statut == "panne" else "🚩 Signaler PANNE"
+        if st.button(label_panne, key=f"panne_{b['id']}", use_container_width=True):
+            nouveau_statut = "libre" if statut == "panne" else "panne"
+            supabase.table("bornes").update({"statut": nouveau_statut}).eq("id", b['id']).execute()
             st.rerun()
+            
     with c2:
-        if statut != "libre":
-            if st.button("✅ Libérer la borne", key=f"free_{b['id']}"):
+        # Bouton Se Brancher (Uniquement si libre)
+        if statut == "libre":
+            if st.button("🔌 Se brancher maintenant", key=f"run_{b['id']}", use_container_width=True):
                 supabase.table("bornes").update({
-                    "statut": "libre", "utilisateur": "", "heure_branchement": ""
+                    "statut": "occupé", 
+                    "utilisateur": "Branchement Direct",
+                    "heure_branchement": now.strftime("%H:%M")
                 }).eq("id", b['id']).execute()
                 st.rerun()
 
-    # Affichage de la file d'attente
+    # --- AFFICHAGE DU PLANNING ---
     if b['suivant'] and b['suivant'] != "-":
-        st.write("📋 **Planning des réservations :**")
-        for r in b['suivant'].split("|"):
-            st.caption(f"• {r.strip()}")
+        st.write("📋 **Planning des prochains jours :**")
+        reservations = b['suivant'].split("|")
+        for r in reservations:
+            st.write(f"• {r.strip()}")
             
     st.divider()
