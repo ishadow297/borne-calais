@@ -21,14 +21,9 @@ def auto(data):
         bid, f = str(b['id']), b.get('suivant') or ""
         if not f.strip() or f.strip() == "-":
             if b['statut'] != "panne" and b['statut'] != "libre" and b['utilisateur'] != "Manuel":
-                db.table("bornes").update({
-                    "statut": "libre",
-                    "utilisateur": "",
-                    "fin": ""
-                }).eq("id", bid).execute()
+                db.table("bornes").update({"statut":"libre","utilisateur":"","fin":""}).eq("id",bid).execute()
             continue
-        rl = [r.strip() for r in f.split("|") if r.strip()]
-        nf, u, hf = [], None, ""
+        rl, nf, u, hf = [r.strip() for r in f.split("|") if r.strip()], [], None, ""
         for r in rl:
             try:
                 nm = r.split(" [")[0]
@@ -42,27 +37,18 @@ def auto(data):
                 elif dd > now: nf.append(r)
             except: nf.append(r)
         if b['statut'] != "panne" and b['utilisateur'] != "Manuel":
-            db.table("bornes").update({
-                "statut": "occupé" if u else "libre",
-                "utilisateur": u or "",
-                "fin": hf,
-                "suivant": " | ".join(nf)
-            }).eq("id", bid).execute()
+            db.table("bornes").update({"statut":"occupé" if u else "libre","utilisateur":u or "","fin":hf,"suivant":" | ".join(nf)}).eq("id",bid).execute()
 
 st.title("⚡ Bornes Calais Pro")
 
-# --- CHARGEMENT DES DONNÉES ---
 try:
     res = db.table("bornes").select("*").order("id").execute()
     d = res.data
     auto(d)
-    # Re-lecture pour affichage
     res = db.table("bornes").select("*").order("id").execute()
     d = res.data
-except:
-    d = []
+except: d = []
 
-# --- BOUCLE D'AFFICHAGE ---
 for b in d:
     bid, s = str(b['id']), str(b['statut']).lower()
     c = "#ffcccc" if s=="panne" else ("#f8d7da" if s=="occupé" else "#d4edda")
@@ -78,21 +64,4 @@ for b in d:
             st.rerun()
     with c2:
         if s == "libre":
-            if st.button("🚗 Occuper", key="o"+bid, use_container_width=True):
-                db.table("bornes").update({
-                    "statut": "occupé",
-                    "utilisateur": "Manuel",
-                    "fin": "--"
-                }).eq("id", bid).execute()
-                st.rerun()
-        else:
-            if st.button("✅ Libérer", key="l"+bid, use_container_width=True):
-                db.table("bornes").update({
-                    "statut": "libre",
-                    "utilisateur": "",
-                    "fin": ""
-                }).eq("id", bid).execute()
-                st.rerun()
-
-    with st.expander("📅 Réserver"):
-        with
+            if st.button("🚗 Occuper", key="o"+bid, use_container_width=
